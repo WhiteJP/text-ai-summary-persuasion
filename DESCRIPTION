@@ -1,0 +1,29 @@
+Package: textAISummaryPersuasion
+Type: Project
+Title: Text AI Summary Persuasion Analysis
+Version: 1.0.0
+Description: Reproducible analyses supporting "Popular social science nonfiction shifts
+    values and partisan attitudes---and their AI summaries are just as persuasive"
+License: CC-By Attribution 4.0 International
+Depends:
+    R (>= 4.5.0)
+Imports:
+    dplyr,
+    tidyr,
+    readr,
+    ggplot2,
+    stringr,
+    purrr,
+    tibble,
+    lubridate,
+    estimatr,
+    broom,
+    BayesFactor,
+    patchwork,
+    ggh4x,
+    ggtext,
+    osfr,
+    here,
+    fs
+Suggests:
+    renv
