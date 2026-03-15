@@ -13,7 +13,6 @@ library(broom)
 library(BayesFactor)
 library(patchwork)
 library(ggh4x)
-library(ggtext)
 
 d <- readRDS(here::here("data", "d.rds"))
 fs::dir_create(here::here("output", "figures"))
@@ -98,71 +97,15 @@ ate_table <- map2_dfr(all_analyses, all_labels, function(a, lab) {
 print(as.data.frame(ate_table), row.names = FALSE)
 
 # =============================================================================
-# Bayes factors for format equivalence
+# Interaction table (Full text ATE - AI summary ATE, Cohen's d)
 # =============================================================================
+# Same data as Panel B of the figure: interaction coefficient scaled to d.
 
-cat("\n\n=== Bayes Factors for Format Equivalence (BF01) ===\n\n")
-
-compute_bf_focused <- function(change_dv, pre_dv, text_treatment, data,
-                               rscale = sqrt(2) / 4) {
-  data_model <- data |>
-    mutate(
-      text_treat  = ifelse(text == text_treatment, 1, 0),
-      format_eff  = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(.data[[pre_dv]]))
-    ) |>
-    select(outcome = all_of(change_dv), text_treat, format_eff, pre_score_z) |>
-    drop_na()
-
-  df <- as.data.frame(data_model)
-
-  # Full model (with text:format interaction)
-  bf_with_int <- lmBF(
-    outcome ~ text_treat + format_eff + pre_score_z +
-      text_treat:format_eff + text_treat:pre_score_z + format_eff:pre_score_z,
-    data = df, rscaleCont = rscale
-  )
-
-  # Restricted model (without text:format interaction)
-  bf_no_int <- lmBF(
-    outcome ~ text_treat + format_eff + pre_score_z +
-      text_treat:pre_score_z + format_eff:pre_score_z,
-    data = df, rscaleCont = rscale
-  )
-
-  bf_01 <- bf_no_int / bf_with_int
-  extractBF(bf_01)$bf
-}
-
-bf_specs <- tribble(
-  ~change_dv,             ~pre_dv,              ~text_treatment, ~label,
-  "irs_approval_change",  "irs_approval_pre",   "Lewis",         "IRS Favorability",
-  "civil_service_change", "civil_service_pre",  "Lewis",         "Civil Service Favorability",
-  "doge_change",          "doge_pre_1",         "Lewis",         "DOGE Disapproval",
-  "trump_change",         "trump_pre_1",        "Lewis",         "Trump Disapproval",
-  "enforce_change",       "enforce_pre_1",      "Lewis",         "IRS Funding Support",
-  "fav_ssa_change",       "fav_ssa_pre_1",      "Lewis",         "SSA Agent Favorability",
-  "mvs_change",           "mvs_pre",            "Haidt",         "Material Values"
-)
-
-bf_primary <- pmap_dfr(bf_specs, function(change_dv, pre_dv, text_treatment, label) {
-  tibble::tibble(label = label, bf_01 = compute_bf_focused(change_dv, pre_dv, text_treatment, d))
-})
-
-print(as.data.frame(bf_primary |> mutate(bf_01 = round(bf_01, 2))))
-
-# =============================================================================
-# Figure 1: Main Results (ATE + Interaction + Bayes Factors)
-# =============================================================================
-
-cat("\nGenerating main results figure...\n")
-
-# Helper: extract, standardize, and flip a coefficient for the forest plot
 extract_forest_coef <- function(analysis, label, pre_dv, panel, coef_type, flip) {
   pre_sd <- sd(d[[pre_dv]], na.rm = TRUE)
   tc <- if (coef_type == "ate") analysis$text_coef else analysis$interaction_coef
   if (nrow(tc) == 0) return(NULL)
-    tibble::tibble(
+  tibble::tibble(
     label   = label,
     panel   = panel,
     effect  = coef_type,
@@ -177,21 +120,125 @@ extract_forest_coef <- function(analysis, label, pre_dv, panel, coef_type, flip)
 lewis_panel <- "Trt Text: 'Cyber Sleuth'"
 haidt_panel <- "Trt Text: 'Pursuit of Happiness'"
 
-# ate_flip: 1 = keep direction, -1 = reverse so positive = persuaded as intended
 forest_specs <- list(
-  list(a = irs_approval,   label = "IRS Favorability",                          pre = "irs_approval_pre",  ate_flip =  1),
-  list(a = civil_service,  label = "Civil Service Favorability",                pre = "civil_service_pre", ate_flip =  1),
-  list(a = doge_approval,  label = "DOGE Disapproval<sup>\u2020</sup>",         pre = "doge_pre_1",        ate_flip = -1),
-  list(a = trump_approval, label = "Trump Disapproval<sup>\u2020</sup>",        pre = "trump_pre_1",       ate_flip = -1),
-  list(a = irs_enforce,    label = "IRS Funding Support",                       pre = "enforce_pre_1",     ate_flip =  1),
-  list(a = fav_ssa,        label = "SSA Agent Favorability",                    pre = "fav_ssa_pre_1",     ate_flip =  1)
+  list(a = irs_approval,   label = "IRS Favorability",           pre = "irs_approval_pre",  ate_flip =  1),
+  list(a = irs_enforce,    label = "IRS Funding Support",        pre = "enforce_pre_1",     ate_flip =  1),
+  list(a = civil_service,  label = "Civil Service Favorability", pre = "civil_service_pre", ate_flip =  1),
+  list(a = fav_ssa,        label = "SSA Agent Favorability",     pre = "fav_ssa_pre_1",     ate_flip =  1),
+  list(a = doge_approval,  label = "DOGE Disapproval",           pre = "doge_pre_1",        ate_flip = -1),
+  list(a = trump_approval, label = "Trump Disapproval",           pre = "trump_pre_1",       ate_flip = -1)
 )
+
+int_data <- bind_rows(
+  map_dfr(forest_specs, ~ extract_forest_coef(
+    .x$a, .x$label, .x$pre, lewis_panel, "interaction", .x$ate_flip * -1)),
+  extract_forest_coef(mvs, "Reduced Material Values",
+                      "mvs_pre", haidt_panel, "interaction", -1 * -1)
+)
+
+cat("\n=== Full Text ATE - AI Summary ATE (Interaction, Cohen's d) ===\n\n")
+
+int_table <- int_data |>
+  mutate(
+    `Full - Summary (d)` = sprintf("%.3f%s", d, sigstars(p)),
+    `95% CI`             = sprintf("[%.3f, %.3f]", ci_low, ci_high),
+    p                    = round(p, 4)
+  ) |>
+  select(DV = label, Panel = panel, `Full - Summary (d)`, `95% CI`, p)
+
+print(as.data.frame(int_table), row.names = FALSE)
+
+# =============================================================================
+# Bayes factors for format equivalence
+# =============================================================================
+# 2x2 ANOVA framework: compare additive model (text + format main effects)
+# against interaction model (text + format + text:format).
+# Factor-coded predictors with JZS prior (rscaleFixed = "medium").
+# Seed set for reproducibility to match preregistration number.
+
+set.seed(270387)
+
+cat("\n\n=== Bayes Factors for Format Equivalence (BF01) ===\n\n")
+
+compute_bf <- function(change_dv, text_treatment, data, rscale = "medium") {
+  data_model <- data |>
+    mutate(
+      text_treat = factor(ifelse(text == text_treatment, 1, 0)),
+      format_eff = factor(format)
+    ) |>
+    select(outcome = all_of(change_dv), text_treat, format_eff) |>
+    drop_na()
+
+  df <- as.data.frame(data_model)
+
+  bf_full <- lmBF(
+    outcome ~ text_treat + format_eff + text_treat:format_eff,
+    data = df, rscaleFixed = rscale, iterations = 50000
+  )
+
+  bf_main <- lmBF(
+    outcome ~ text_treat + format_eff,
+    data = df, rscaleFixed = rscale, iterations = 50000
+  )
+
+  bf_01 <- bf_main / bf_full
+  extractBF(bf_01)$bf
+}
+
+bf_specs <- tribble(
+  ~change_dv,             ~text_treatment, ~label,
+  "irs_approval_change",  "Lewis",         "IRS Favorability",
+  "enforce_change",       "Lewis",         "IRS Funding Support",
+  "civil_service_change", "Lewis",         "Civil Service Favorability",
+  "fav_ssa_change",       "Lewis",         "SSA Agent Favorability",
+  "doge_change",          "Lewis",         "DOGE Disapproval",
+  "trump_change",         "Lewis",         "Trump Disapproval",
+  "mvs_change",           "Haidt",         "Reduced Material Values"
+)
+
+bf_primary <- pmap_dfr(bf_specs, function(change_dv, text_treatment, label) {
+  tibble::tibble(label = label, bf_01 = compute_bf(change_dv, text_treatment, d))
+})
+
+print(as.data.frame(bf_primary |> mutate(bf_01 = round(bf_01, 2))))
+
+# =============================================================================
+# BF prior sensitivity analysis
+# =============================================================================
+
+cat("\n\n=== BF01 Sensitivity to Prior Scale (rscaleFixed) ===\n\n")
+
+set.seed(270387)
+rscale_grid <- c("medium" = 0.5, "wide" = sqrt(2) / 2, "ultrawide" = 1)
+
+bf_all <- map_dfr(names(rscale_grid), function(scale_name) {
+  pmap_dfr(bf_specs, function(change_dv, text_treatment, label) {
+    tibble::tibble(
+      DV    = label,
+      prior = scale_name,
+      bf_01 = compute_bf(change_dv, text_treatment, d, rscale_grid[scale_name])
+    )
+  })
+})
+
+bf_sensitivity <- bf_all |>
+  mutate(bf_fmt = sprintf("%.2f", bf_01)) |>
+  select(DV, prior, bf_fmt) |>
+  pivot_wider(names_from = prior, values_from = bf_fmt)
+
+print(as.data.frame(bf_sensitivity), row.names = FALSE)
+
+# =============================================================================
+# Figure 1: Main Results (ATE + Interaction + Bayes Factors)
+# =============================================================================
+
+cat("\nGenerating main results figure...\n")
 
 # Panel A: Overall ATE (positive = persuaded in predicted direction)
 ate_data <- bind_rows(
   map_dfr(forest_specs, ~ extract_forest_coef(
     .x$a, .x$label, .x$pre, lewis_panel, "ate", .x$ate_flip)),
-  extract_forest_coef(mvs, "Reduced Material Values<sup>\u2020</sup>",
+  extract_forest_coef(mvs, "Reduced Material Values",
                       "mvs_pre", haidt_panel, "ate", -1)
 ) |>
   mutate(
@@ -203,7 +250,7 @@ ate_data <- bind_rows(
 int_data <- bind_rows(
   map_dfr(forest_specs, ~ extract_forest_coef(
     .x$a, .x$label, .x$pre, lewis_panel, "interaction", .x$ate_flip * -1)),
-  extract_forest_coef(mvs, "Reduced Material Values<sup>\u2020</sup>",
+  extract_forest_coef(mvs, "Reduced Material Values",
                       "mvs_pre", haidt_panel, "interaction", -1 * -1)
 ) |>
   mutate(
@@ -216,41 +263,33 @@ p_ate <- ggplot(ate_data, aes(x = d, y = label)) +
   geom_pointrange(aes(xmin = ci_low, xmax = ci_high), size = 0.4) +
   facet_wrap(~ panel, ncol = 1, scales = "free_y") +
   force_panelsizes(rows = c(6, 1.5)) +
-  labs(x = "Overall ATE", y = NULL) +
+  labs(title = "(A) Average Attitude Change", x = "Overall ATE", y = NULL) +
   theme_bw() +
-  theme(axis.text.y = element_markdown())
+  theme(axis.text.y = element_text(),
+        plot.title = element_text(size = 8.5, face = "bold", hjust = 0.5))
 
 p_int <- ggplot(int_data, aes(x = d, y = label)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
   geom_pointrange(aes(xmin = ci_low, xmax = ci_high), size = 0.4) +
   facet_wrap(~ panel, ncol = 1, scales = "free_y") +
   force_panelsizes(rows = c(6, 1.5)) +
-  labs(x = "Full text ATE \u2013 AI summary ATE", y = NULL) +
+  labs(title = "(B) Full Text vs. AI Summary",
+       x = "Full text ATE \u2013 AI summary ATE", y = NULL) +
   theme_bw() +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        plot.title = element_text(size = 8.5, face = "bold", hjust = 0.5))
 
 # Panel C: Bayes factors
 bf_panel_labels <- c(
-  lewis_panel = "'Cyber Sleuth'",
-  haidt_panel = "'Pursuit of Happiness'"
-)
-
-# Assign display labels matching the ATE/interaction panels
-bf_display_labels <- c(
-  "IRS Favorability", "Civil Service Favorability",
-  "DOGE Disapproval<sup>\u2020</sup>", "Trump Disapproval<sup>\u2020</sup>",
-  "IRS Funding Support", "SSA Agent Favorability",
-  "Reduced Material Values<sup>\u2020</sup>"
+  lewis_panel = lewis_panel,
+  haidt_panel = haidt_panel
 )
 
 bf_plot_data <- bf_primary |>
   mutate(
-    label = bf_display_labels,
-    panel = if_else(
-      label == "Reduced Material Values<sup>\u2020</sup>",
-      bf_panel_labels[["haidt_panel"]],
-      bf_panel_labels[["lewis_panel"]]
-    ),
+    panel = if_else(label == "Reduced Material Values",
+                    bf_panel_labels[["haidt_panel"]],
+                    bf_panel_labels[["lewis_panel"]]),
     label = factor(label, levels = levels(int_data$label)),
     panel = factor(panel, levels = unname(bf_panel_labels))
   )
@@ -259,30 +298,33 @@ p_bf <- ggplot(bf_plot_data, aes(x = bf_01, y = label)) +
   geom_vline(xintercept = 3, linetype = "dashed", color = "grey45") +
   geom_point() +
   geom_text(aes(label = sprintf("%.2f", bf_01)), hjust = -0.225, size = 2.8) +
-  scale_x_continuous(expand = expansion(mult = c(0.05, 0.30))) +
+  scale_x_continuous(breaks = c(2, 4, 6, 8),
+                     expand = expansion(mult = c(0.05, 0.30))) +
   facet_wrap(~ panel, ncol = 1, scales = "free_y") +
   force_panelsizes(rows = c(6, 1.5)) +
   labs(
+    title = "(C) Text/Summary Equivalence",
     x = expression("Format equivalence" ~ (BF["01"])),
     y = NULL
   ) +
   theme_bw() +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        plot.title = element_text(size = 8.5, face = "bold", hjust = 0.5))
 
 # Combine panels
 p_main_results <- p_ate + p_int + p_bf +
-  plot_layout(widths = c(1, 1, 0.75)) +
-  plot_annotation(tag_levels = "A") &
+  plot_layout(widths = c(1, 1, 1)) &
   theme(
     strip.text    = element_text(size = 8),
     axis.text.x   = element_text(size = 8),
-    axis.title.x  = element_text(size = 8.5)
+    axis.title.x  = element_text(size = 8.5),
+    plot.margin   = margin(4, 3, 4, 2)
   )
 
 ggsave(
   here::here("output", "figures", "main-results.png"),
   p_main_results,
-  width = 7.5, height = 3.5, dpi = 300, bg = "white"
+  width = 7.1, height = 3.5, dpi = 300, bg = "white"
 )
 
 cat("Saved: output/figures/main-results.png\n")

@@ -37,12 +37,13 @@ This repository contains the complete code to reproduce all analyses, figures, a
    source("main.R")
    ```
 
-   This downloads the data from OSF (if not already present), runs every analysis script in order, prints all statistical output to the console, and saves the main figure.
+   This downloads the data from OSF (if not already present), runs every analysis script in order, prints all statistical output to the console, and saves the main figure and tables.
 
 ### Expected Output
 
-- **Console output**: Sample flow, demographics, attrition tests, comprehension and reading time ANOVAs, ATEs with Bayes factors, and robustness checks — all printed to the console.
+- **Console output**: Sample flow, demographics, attrition tests, comprehension and reading time ANOVAs, ATEs with Bayes factors and prior-sensitivity analysis, robustness checks (baseline-carry-forward and Lee bounds), heterogeneity by demographics, and Cronbach's alpha — all printed to the console.
 - **Figure**: `output/figures/main-results.png` (Figure 1 from the paper).
+- **Tables**: `output/tables/ate-sensitivity.tex` (ATE sensitivity to attrition assumptions).
 - **Runtime**: ~2–5 minutes total (after packages are installed).
 
 ### Alternative: Run scripts individually
@@ -55,8 +56,10 @@ source("scripts/01_wrangle_data.R")        # Wrangle raw data, create analysis s
 source("scripts/02_sample_descriptives.R") # Sample flow, demographics, balance
 source("scripts/03_attrition_analysis.R")  # Attrition tests, attriter progress
 source("scripts/04_comprehension_timing.R")# Comprehension and reading time ANOVAs
-source("scripts/05_main_analyses.R")       # ATEs, Bayes factors, Figure 1
-source("scripts/06_robustness_checks.R")   # Carry-forward and Lee bounds
+source("scripts/05_main_analyses.R")       # ATEs, Bayes factors, prior sensitivity, Figure 1
+source("scripts/06_robustness_checks.R")   # Carry-forward, Lee bounds, ATE sensitivity table
+source("scripts/07_heterogeneity_demographics.R")  # Treatment-effect moderation by demographics
+source("scripts/08_cronbach_alpha.R")      # Internal consistency (Cronbach's alpha)
 ```
 
 ## Data
@@ -83,10 +86,13 @@ text-ai-summary-persuasion/
 │   ├── 03_attrition_analysis.R        # Differential attrition tests
 │   ├── 04_comprehension_timing.R      # Comprehension & reading time ANOVAs
 │   ├── 05_main_analyses.R            # ATE estimation, Bayes factors, Figure 1
-│   └── 06_robustness_checks.R        # Carry-forward & Lee-style trimming
+│   ├── 06_robustness_checks.R        # Carry-forward, Lee bounds, ATE sensitivity
+│   ├── 07_heterogeneity_demographics.R  # Treatment-effect moderation by demographics
+│   └── 08_cronbach_alpha.R           # Internal consistency (Cronbach's alpha)
 ├── data/                               # Downloaded at runtime (gitignored)
 └── output/
-    └── figures/                        # Generated figures (gitignored)
+    ├── figures/                        # Generated figures (gitignored)
+    └── tables/                         # LaTeX tables (e.g., ate-sensitivity.tex)
 ```
 
 ## What Each Script Produces
@@ -96,14 +102,16 @@ text-ai-summary-persuasion/
 | `02_sample_descriptives.R` | Methods: Participants | Sample sizes (N = 625 → 599 → 555), demographics |
 | `03_attrition_analysis.R` | Results: Attrition | Logistic regression (dropout ~ format × text), attriter progress |
 | `04_comprehension_timing.R` | Results: Comprehension & reading time | 2-way ANOVAs (text × format) |
-| `05_main_analyses.R` | Results: ATEs & format equivalence | ATEs, Bayes factors, **Figure 1** |
-| `06_robustness_checks.R` | Results: Robustness (Table 1) | Carry-forward & Lee bounds |
+| `05_main_analyses.R` | Results: ATEs & format equivalence | ATEs, Bayes factors (incl. prior sensitivity), **Figure 1** |
+| `06_robustness_checks.R` | Results: Robustness | Carry-forward, Lee bounds, **ate-sensitivity.tex** |
+| `07_heterogeneity_demographics.R` | Results: Heterogeneity | Moderation by gender, age, education, income, race, partisanship |
+| `08_cronbach_alpha.R` | Methods: Measures | Cronbach's α for IRS, Civil Service, and MVS composites |
 
 ## System Requirements
 
 **Software**: R (≥ 4.5.0), RStudio (recommended)
 
-**R packages** (automatically installed via `renv`): dplyr, tidyr, readr, ggplot2, stringr, purrr, tibble, lubridate, estimatr, broom, marginaleffects, BayesFactor, patchwork, ggh4x, ggtext, osfr, here, fs
+**R packages** (automatically installed via `renv`): dplyr, tidyr, readr, ggplot2, stringr, purrr, tibble, lubridate, estimatr, broom, BayesFactor, patchwork, ggh4x, osfr, here, fs, psych
 
 **Hardware**: Any standard desktop or laptop.
 

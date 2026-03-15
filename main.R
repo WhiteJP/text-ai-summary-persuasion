@@ -49,7 +49,16 @@ source(here("scripts", "05_main_analyses.R"))
 cat("\n--- Step 6: Robustness checks ---\n")
 source(here("scripts", "06_robustness_checks.R"))
 
+# Step 7: Heterogeneity by demographics
+cat("\n--- Step 7: Heterogeneity by demographics ---\n")
+source(here("scripts", "07_heterogeneity_demographics.R"))
+
+# Step 8: Internal consistency (Cronbach's alpha)
+cat("\n--- Step 8: Cronbach's alpha ---\n")
+source(here("scripts", "08_cronbach_alpha.R"))
+
 cat("\n====================================================================\n")
 cat("All analyses complete.\n")
 cat("Figure saved to: output/figures/main-results.png\n")
+cat("Tables saved to: output/tables/\n")
 cat("====================================================================\n")

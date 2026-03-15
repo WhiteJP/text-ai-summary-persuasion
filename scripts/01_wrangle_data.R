@@ -177,7 +177,44 @@ d_all <- d_raw %>%
       ideology_cat == "Conservative" ~ 5 + con_lean,
     ),
   ) |>
-  mutate(multi_hot_df(race, race_codes, "race_"))
+  mutate(multi_hot_df(race, race_codes, "race_")) |>
+
+  # Moderator variables for heterogeneity analyses
+  mutate(
+    gender_recoded = factor(
+      case_when(gender == "Male" ~ "Male", gender == "Female" ~ "Female"),
+      levels = c("Male", "Female")
+    ),
+    educ_cat_clean = as.character(educ_cat),
+    educ_cat_clean = case_when(
+      educ_cat_clean %in% c("< HS", "HS") ~ "HS or less",
+      TRUE ~ educ_cat_clean
+    ),
+    educ_cat_clean = factor(educ_cat_clean,
+      levels = c("HS or less", "Some College", "2yr College", "4yr College", "Post-grad")
+    ),
+    income_cat_clean = as.character(income_cat),
+    income_cat_clean = case_when(
+      income_cat_clean %in% c("<10K", "10-30K") ~ "<30K",
+      income_cat_clean %in% c("100-250K", ">250K") ~ ">100K",
+      TRUE ~ income_cat_clean
+    ),
+    income_cat_clean = factor(income_cat_clean,
+      levels = c("<30K", "30-60K", "60-100K", ">100K")
+    ),
+    race_white_fct = factor(
+      ifelse(race_white == 1, "White", "Non-White"),
+      levels = c("Non-White", "White")
+    ),
+    strong_republican = factor(
+      ifelse(dem_rep_num == 7, "Strong Rep", "Other"),
+      levels = c("Other", "Strong Rep")
+    ),
+    strong_conservative = factor(
+      ifelse(lib_con_num == 7, "Strong Con", "Other"),
+      levels = c("Other", "Strong Con")
+    )
+  )
 
 # --- Define analysis samples -------------------------------------------------
 # 1. d_all      = everyone who started (after date filter)

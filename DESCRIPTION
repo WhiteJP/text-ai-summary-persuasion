@@ -21,9 +21,9 @@ Imports:
     BayesFactor,
     patchwork,
     ggh4x,
-    ggtext,
     osfr,
     here,
-    fs
+    fs,
+    psych
 Suggests:
     renv

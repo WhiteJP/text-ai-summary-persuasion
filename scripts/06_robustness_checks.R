@@ -228,19 +228,75 @@ fmt_d_ci <- function(d, lo, hi, p) {
 cat("ATE Sensitivity to Attrition (Cohen's d [95% CI])\n")
 cat("Positive = attitude change in predicted direction of persuasion\n\n")
 
+figure_label_map <- c(
+  "IRS Favorability"   = "IRS Favorability",
+  "Civil Service Fav." = "Civil Service Favorability",
+  "DOGE Disapproval"   = "DOGE Disapproval",
+  "Trump Disapproval"  = "Trump Disapproval",
+  "IRS Funding Support" = "IRS Funding Support",
+  "SSA Agent Fav."     = "SSA Agent Favorability",
+  "Material Values"    = "Material Values"
+)
+
+figure_order <- c(
+  "IRS Favorability", "IRS Funding Support", "Civil Service Favorability",
+  "SSA Agent Favorability", "DOGE Disapproval", "Trump Disapproval",
+  "Material Values"
+)
+
 robustness_table <- main_h %>%
   transmute(DV, Completers = fmt_d_ci(d, d_ci_low, d_ci_high, p.value)) %>%
   left_join(
-    cf_h %>% transmute(DV, `Carry Fwd` = fmt_d_ci(d, d_ci_low, d_ci_high, p.value)),
+    cf_h %>% transmute(DV, `Baseline Carry Forward` = fmt_d_ci(d, d_ci_low, d_ci_high, p.value)),
     by = "DV"
   ) %>%
   left_join(
-    lee_h %>% transmute(DV, `Worst Obs.` = fmt_d_ci(d, d_ci_low, d_ci_high, p.value)),
+    lee_h %>% transmute(DV, `Lee-style Pessimistic Trimming` = fmt_d_ci(d, d_ci_low, d_ci_high, p.value)),
     by = "DV"
-  )
+  ) %>%
+  mutate(DV = dplyr::recode(DV, !!!figure_label_map)) %>%
+  mutate(DV = factor(DV, levels = figure_order)) %>%
+  arrange(DV) %>%
+  mutate(DV = as.character(DV))
 
 print(as.data.frame(robustness_table), row.names = FALSE)
 
-cat("\nNote: Carry Fwd sets attriters' change = 0 (post = pre).\n")
-cat("Worst Obs. = Lee-style pessimistic bound (closest to zero).\n")
+cat("\nNote: Baseline Carry Forward sets attriters' change = 0 (post = pre).\n")
+cat("Lee-style Pessimistic Trimming = pessimistic bound closest to zero.\n")
 cat(". p < .10, * p < .05, ** p < .01, *** p < .001\n")
+
+# =============================================================================
+# LaTeX table output
+# =============================================================================
+
+fs::dir_create(here::here("output", "tables"), recursive = TRUE)
+
+table_rows <- robustness_table %>%
+  transmute(
+    row = sprintf("%s & %s & %s & %s \\\\", DV, Completers,
+                  `Baseline Carry Forward`, `Lee-style Pessimistic Trimming`)
+  ) %>%
+  pull(row)
+
+latex_code <- paste(
+  "\\begin{table}[!htbp]",
+  "  \\centering",
+  "  \\caption{ATE Sensitivity to Attrition Assumptions}",
+  "  \\label{tab:robust-ate}",
+  "  \\begin{tabular}{llll}",
+  "  \\toprule",
+  "  Outcome & Completers & \\shortstack[l]{Baseline\\\\Carry Forward} & \\shortstack[l]{Lee-style\\\\Pessimistic Trimming} \\\\",
+  "  \\midrule",
+  paste("  ", table_rows, collapse = "\n"),
+  "  \\bottomrule",
+  "  \\end{tabular}",
+  "  \\vspace{2pt}",
+  "  \\begin{minipage}{0.98\\linewidth}",
+  "  \\footnotesize\\textit{Note.} Entries are Cohen's $d$ (95\\% CI). Some outcomes are reverse-coded so that positive values indicate change in the predicted direction of persuasion. Baseline Carry Forward sets attriters' change to 0 (post = pre). Lee-style Pessimistic Trimming reports the pessimistic bound closest to zero. . $p < .10$, * $p < .05$, ** $p < .01$, *** $p < .001$.",
+  "  \\end{minipage}",
+  "\\end{table}",
+  sep = "\n"
+)
+
+writeLines(latex_code, here::here("output", "tables", "ate-sensitivity.tex"))
+cat("\nSaved: output/tables/ate-sensitivity.tex\n")
