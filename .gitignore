@@ -3,15 +3,6 @@
 .RData
 .Rproj.user
 
-# renv internals (keep renv.lock and renv/activate.R)
-renv/library/
-renv/staging/
-renv/sandbox/
-renv/local/
-renv/cellar/
-renv/lock/
-renv/python/
-
 # Data (downloaded at runtime from OSF)
 data/
 
@@ -19,8 +10,7 @@ data/
 output/
 
 # Extra analyses (not for publication)
-scripts/extra_analyses.R
-output/extra/
+scripts/extra_analyses/
 
 # OS
 .DS_Store

@@ -1,12 +1,16 @@
 #' Download data files from an OSF node
 #'
-#' Retrieves all top-level files from the specified OSF node and saves
-#' them into dest_dir. Skips files that already exist unless overwrite = TRUE.
+#' Retrieves files from the specified OSF node (optionally from a
+#' subdirectory) and saves them into dest_dir. Skips files that
+#' already exist unless overwrite = TRUE.
 #'
 #' @param osf_node_id Character string, the 5-character OSF node identifier.
+#' @param osf_path Optional subdirectory path on the OSF node (e.g. "data").
+#'   When NULL, downloads top-level files.
 #' @param dest_dir Local directory to save downloaded files.
 #' @param overwrite If TRUE, re-download even if files already exist.
 download_osf_data <- function(osf_node_id,
+                              osf_path = NULL,
                               dest_dir = here::here("data"),
                               overwrite = FALSE) {
   fs::dir_create(dest_dir)
@@ -14,10 +18,16 @@ download_osf_data <- function(osf_node_id,
   message("Retrieving OSF node: ", osf_node_id)
   node <- osfr::osf_retrieve_node(osf_node_id)
 
-  all_files <- osfr::osf_ls_files(node, n_max = Inf)
+  if (!is.null(osf_path)) {
+    message("Navigating to OSF path: ", osf_path)
+    all_files <- osfr::osf_ls_files(node, path = osf_path, n_max = Inf)
+  } else {
+    all_files <- osfr::osf_ls_files(node, n_max = Inf)
+  }
 
   if (nrow(all_files) == 0L) {
-    stop("No files found on OSF node '", osf_node_id, "'.")
+    stop("No files found on OSF node '", osf_node_id, "'",
+         if (!is.null(osf_path)) paste0(" at path '", osf_path, "'"), ".")
   }
 
   existing <- fs::path(dest_dir, all_files$name)

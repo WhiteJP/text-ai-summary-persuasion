@@ -1,14 +1,18 @@
 # =============================================================================
-# 08 · Internal Consistency: Cronbach's Alpha
+# 10 · Internal Consistency: Cronbach's Alpha
 # =============================================================================
-# Computes Cronbach's alpha for each composite scale at pre- and
-# post-treatment timepoints.
+# Computes Cronbach's alpha for each composite scale (IRS Approval, Civil
+# Service, Material Values Scale) at pre- and post-treatment, with N items,
+# N obs, average inter-item correlation, and the inter-item r for 2-item
+# composites.
 
-library(dplyr)
-library(tidyr)
-library(purrr)
-library(stringr)
-library(psych)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(purrr)
+  library(stringr)
+  library(psych)
+})
 
 d <- readRDS(here::here("data", "d.rds"))
 

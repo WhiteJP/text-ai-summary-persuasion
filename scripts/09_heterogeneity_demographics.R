@@ -1,15 +1,21 @@
 # =============================================================================
-# 07 · Treatment-Effect Heterogeneity by Demographics
+# 09 · Treatment-Effect Heterogeneity by Demographics (T1 + T2)
 # =============================================================================
 # Tests whether treatment effects vary across demographic moderators.
 # Model: change ~ text_treat * moderator + pre_score_z (no format).
 # Holm correction applied across moderators within each DV.
 # Outputs a summary table of moderator p-values (raw and Holm-corrected).
+#
+# Part 1: Wave-1 completers (T1 − pre).
+# Part 2 (conditional): Follow-up completers (T2 − pre), same moderators/
+#   correction. Requires data/d_with_followup.rds from 01b_link_followup_data.R.
 
-library(dplyr)
-library(purrr)
-library(estimatr)
-library(broom)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(purrr)
+  library(estimatr)
+  library(broom)
+})
 
 d <- readRDS(here::here("data", "d.rds"))
 
@@ -136,8 +142,8 @@ summary_table <- het_summary %>%
     Moderator = mod_label,
     F = sprintf("%.3f", f_statistic),
     df1, df2,
-    p = format.pval(p_value, digits = 3),
-    p_holm = format.pval(p_holm, digits = 3),
+    p = format.pval(p_value, digits = 5),
+    p_holm = format.pval(p_holm, digits = 5),
     sig = sigstars(p_holm)
   )
 
@@ -150,4 +156,65 @@ if (sig_count > 0) {
   cat("\nNo significant heterogeneity after Holm correction.\n")
 }
 
+# =============================================================================
+# Part 2: Follow-up (T2 − pre) heterogeneity
+# =============================================================================
 
+fu_path <- here::here("data", "d_with_followup.rds")
+
+if (file.exists(fu_path)) {
+  d_fu <- readRDS(fu_path) |>
+    dplyr::filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L) |>
+    dplyr::distinct(PROLIFIC_PID, .keep_all = TRUE)
+
+  dv_specs_t2 <- tribble(
+    ~change_dv,                ~pre_dv,             ~label,                          ~text_treatment,
+    "irs_change_t2",           "irs_approval_pre",  "IRS Approval Composite (FU)",   "Lewis",
+    "civil_service_change_t2", "civil_service_pre", "Civil Service Composite (FU)",  "Lewis",
+    "doge_change_t2",          "doge_pre_1",        "DOGE Approval (FU)",            "Lewis",
+    "trump_change_t2",         "trump_pre_1",       "Trump Approval (FU)",           "Lewis",
+    "enforce_change_t2",       "enforce_pre_1",     "IRS Enforcement (FU)",          "Lewis",
+    "fav_ssa_change_t2",       "fav_ssa_pre_1",     "SSA Agents Favorability (FU)",  "Lewis",
+    "mvs_change_t2",           "mvs_pre",           "Material Values Scale (FU)",    "Haidt"
+  )
+
+  cat("\n=== Treatment-Effect Heterogeneity by Demographics (follow-up) ===\n\n")
+
+  all_het_tests_t2 <- list()
+
+  for (dv_idx in seq_len(nrow(dv_specs_t2))) {
+    spec <- dv_specs_t2[dv_idx, ]
+
+    dv_tests <- map_dfr(moderators, function(mod) {
+      estimate_het_one_mod(d_fu, spec$change_dv, spec$pre_dv, spec$text_treatment, mod)
+    }) %>%
+      mutate(dv = spec$label, .before = 1)
+
+    dv_tests$p_holm <- p.adjust(dv_tests$p_value, method = "holm")
+    all_het_tests_t2[[spec$label]] <- dv_tests
+  }
+
+  het_summary_t2 <- bind_rows(all_het_tests_t2)
+
+  summary_table_t2 <- het_summary_t2 %>%
+    transmute(
+      DV = dv,
+      Moderator = mod_label,
+      F = sprintf("%.3f", f_statistic),
+      df1, df2,
+      p = format.pval(p_value, digits = 5),
+      p_holm = format.pval(p_holm, digits = 5),
+      sig = sigstars(p_holm)
+    )
+
+  print(as.data.frame(summary_table_t2), row.names = FALSE)
+
+  sig_count_t2 <- sum(het_summary_t2$p_holm < 0.05, na.rm = TRUE)
+  if (sig_count_t2 > 0) {
+    cat(sprintf("\n%d significant after Holm correction (p_holm < 0.05).\n", sig_count_t2))
+  } else {
+    cat("\nNo significant heterogeneity after Holm correction.\n")
+  }
+} else {
+  cat("\nSkipped follow-up heterogeneity: data/d_with_followup.rds not found.\n")
+}

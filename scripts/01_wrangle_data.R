@@ -5,11 +5,13 @@
 # timing, comprehension, and demographics. Defines and saves three
 # analysis samples: d_all, d_itt, d (completers).
 
-library(dplyr)
-library(tidyr)
-library(readr)
-library(stringr)
-library(lubridate)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(readr)
+  library(stringr)
+  library(lubridate)
+})
 
 source(here::here("scripts", "functions", "read_csv_qualtrics.R"))
 
@@ -127,13 +129,13 @@ d_all <- d_raw %>%
   ) %>%
   mutate(
     lewis_comp_total = ifelse(
-      !is.na(lewis_comp1) | !is.na(lewis_comp2) | !is.na(lewis_comp3),
-      rowSums(select(., lewis_comp1_correct, lewis_comp2_correct, lewis_comp3_correct), na.rm = TRUE),
+      !is.na(lewis_comp1) & !is.na(lewis_comp2) & !is.na(lewis_comp3),
+      lewis_comp1_correct + lewis_comp2_correct + lewis_comp3_correct,
       NA_integer_
     ),
     haidt_comp_total = ifelse(
-      !is.na(haidt_comp1) | !is.na(haidt_comp2) | !is.na(haidt_comp3),
-      rowSums(select(., haidt_comp1_correct, haidt_comp2_correct, haidt_comp3_correct), na.rm = TRUE),
+      !is.na(haidt_comp1) & !is.na(haidt_comp2) & !is.na(haidt_comp3),
+      haidt_comp1_correct + haidt_comp2_correct + haidt_comp3_correct,
       NA_integer_
     ),
     comp_total       = ifelse(text == "Lewis", lewis_comp_total, haidt_comp_total),

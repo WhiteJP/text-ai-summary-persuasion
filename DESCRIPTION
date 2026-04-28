@@ -2,8 +2,9 @@ Package: textAISummaryPersuasion
 Type: Project
 Title: Text AI Summary Persuasion Analysis
 Version: 1.0.0
-Description: Reproducible analyses supporting "Popular social science nonfiction shifts
-    values and partisan attitudes---and their AI summaries are just as persuasive"
+Description: Reproducible analyses supporting White, Berinsky, Pastoriza, & Rand
+    (2026) "Popular social science nonfiction can durably shift politically
+    relevant attitudes---and their AI summaries are just as persuasive".
 License: CC-By Attribution 4.0 International
 Depends:
     R (>= 4.5.0)
@@ -24,6 +25,8 @@ Imports:
     osfr,
     here,
     fs,
-    psych
+    psych,
+    lavaan,
+    car
 Suggests:
     renv
