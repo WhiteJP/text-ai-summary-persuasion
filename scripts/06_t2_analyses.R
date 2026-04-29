@@ -406,7 +406,7 @@ med_model <- "
 "
 
 # FALSE = ML standard errors + delta method CIs for defined parameters (no bootstrap)
-med_use_bootstrap <- FALSE
+med_use_bootstrap <- TRUE
 
 cat("\n\n=== Moderated mediation (lavaan; wave-1 post = T1, FU = T2) ===\n")
 cat(
