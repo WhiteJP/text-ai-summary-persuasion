@@ -9,7 +9,7 @@ This repository contains the complete code to reproduce all analyses, figures, a
 ### Prerequisites
 
 - **R 4.5.0+** — Download from [r-project.org](https://www.r-project.org/)
-- **RStudio** (recommended) — Download from [posit.co](https://posit.co/download/rstudio-desktop/)
+- **RStudio** (recommended) — Download from [posit.co](https://posit.co/download/rstudio-desktop/) (Note, newest version 2026.04 bugs as at Apr 28 2026).
 
 ### Reproduce all analyses
 
