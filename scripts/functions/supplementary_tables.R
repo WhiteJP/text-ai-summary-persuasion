@@ -167,7 +167,7 @@ write_mediation_persistence_tex <- function(med_wide, path, n_fu) {
   }
 
   note <- paste0(
-    "    \\footnotesize\\textit{Note.} Table reports effects averaged across format, as persistence they did not ",
+    "    \\footnotesize\\textit{Note.} Table reports effects averaged across format, as persistence did not ",
     "differ by format (Format mod.\\ shows corresponding non-significant $p$ values). Estimates are on the raw ",
     "outcome scale, with all indirect effect point estimates in the direction of expected persuasion (i.e., for ",
     "DOGE Approval, Trump Approval, and Material Values negative values show reduced approval / materialism). ",
