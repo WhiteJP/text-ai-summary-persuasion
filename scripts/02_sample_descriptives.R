@@ -155,25 +155,21 @@ if (!file.exists(d_with_fu_path) || !file.exists(d_itt_fu_path)) {
   d_itt_with_fu <- readRDS(d_itt_fu_path)
   d_with_fu <- readRDS(d_with_fu_path)
 
-  # Unique-PID versions for counting
-  d_itt_uniq <- d_itt_with_fu |> distinct(PROLIFIC_PID, .keep_all = TRUE)
-  d_comp_uniq <- d_with_fu |> distinct(PROLIFIC_PID, .keep_all = TRUE)
+  n_itt       <- nrow(d_itt_with_fu)
+  n_itt_start <- sum(d_itt_with_fu$fu_started)
+  n_itt_fin   <- sum(d_itt_with_fu$fu_finished)
 
-  n_itt       <- nrow(d_itt_uniq)
-  n_itt_start <- sum(d_itt_uniq$fu_started)
-  n_itt_fin   <- sum(d_itt_uniq$fu_finished)
-
-  n_comp       <- nrow(d_comp_uniq)
-  n_comp_start <- sum(d_comp_uniq$fu_started)
-  n_comp_fin   <- sum(d_comp_uniq$fu_finished)
+  n_comp       <- nrow(d_with_fu)
+  n_comp_start <- sum(d_with_fu$fu_started)
+  n_comp_fin   <- sum(d_with_fu$fu_finished)
 
   cat("\n=== Follow-up Sample Flow ===\n\n")
   flow_fu <- data.frame(
     Stage = c(
-      "ITT (original), unique participants",
+      "ITT (original)",
       "  ... started follow-up",
       "  ... finished follow-up",
-      "Original completers, unique participants",
+      "Original completers",
       "  ... started follow-up",
       "  ... finished follow-up"
     ),
@@ -191,9 +187,7 @@ if (!file.exists(d_with_fu_path) || !file.exists(d_itt_fu_path)) {
 
   # --- Follow-up starters descriptives ----------------------------------------
 
-  d_fu_starters <- d_with_fu |>
-    filter(fu_started == 1L) |>
-    distinct(PROLIFIC_PID, .keep_all = TRUE)
+  d_fu_starters <- d_with_fu |> filter(fu_started == 1L)
 
   cat_survey_timing(
     d_fu_starters,
@@ -207,9 +201,7 @@ if (!file.exists(d_with_fu_path) || !file.exists(d_itt_fu_path)) {
 
   # --- Follow-up finishers descriptives ---------------------------------------
 
-  d_fu_finishers <- d_with_fu |>
-    filter(fu_finished == 1L) |>
-    distinct(PROLIFIC_PID, .keep_all = TRUE)
+  d_fu_finishers <- d_with_fu |> filter(fu_finished == 1L)
 
   cat_survey_timing(
     d_fu_finishers,

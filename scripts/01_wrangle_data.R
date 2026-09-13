@@ -4,6 +4,8 @@
 # Loads raw Qualtrics CSV, creates composite measures, change scores,
 # timing, comprehension, and demographics. Defines and saves three
 # analysis samples: d_all, d_itt, d (completers).
+#
+# Date filter: StartDate >= 2026-01-27 excludes pilot data.
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -14,9 +16,11 @@ suppressPackageStartupMessages({
 })
 
 source(here::here("scripts", "functions", "read_csv_qualtrics.R"))
+source(here::here("scripts", "functions", "dedupe_prolific_pid.R"))
 
 # --- Load raw data -----------------------------------------------------------
 
+# Exclude pilot data.
 d_raw <- read_csv_qualtrics(
   here::here("data", "text-ai-summary-qualtrics-data.csv"),
   col_types = cols(attn_check = col_character())
@@ -219,9 +223,21 @@ d_all <- d_raw %>%
   )
 
 # --- Define analysis samples -------------------------------------------------
-# 1. d_all      = everyone who started (after date filter)
+# One row per PROLIFIC_PID before samples (see dedupe_prolific_pid()):
+#   prefer treated; if both treated keep earliest StartDate; if both untreated
+#   prefer failed AC1; else earliest StartDate. NA PIDs are not collapsed.
+# 1. d_all      = everyone who started (after date filter + dedupe)
 # 2. d_itt      = treated + passed attention check 2 (preregistered)
 # 3. d          = ITT participants who finished the survey (completers)
+
+n_before_dedupe <- nrow(d_all)
+d_all <- dedupe_prolific_pid(d_all)
+if (nrow(d_all) < n_before_dedupe) {
+  cat(sprintf(
+    "Deduped PROLIFIC_PID: %d -> %d rows (dropped %d duplicate session(s)).\n",
+    n_before_dedupe, nrow(d_all), n_before_dedupe - nrow(d_all)
+  ))
+}
 
 d_passed_attn1 <- d_all |> filter(attncheck1_passed)
 d_treated      <- d_all |> filter(treated)
@@ -236,10 +252,10 @@ saveRDS(d,     here::here("data", "d.rds"))
 
 cat(sprintf(
   paste0("Data wrangling complete.\n",
-         "  Started survey:       %d\n",
-         "  Passed attn check 1:  %d\n",
-         "  Received treatment:   %d\n",
-         "  ITT sample:           %d\n",
-         "  Final (completers):   %d\n"),
+         "  Started survey:              %d\n",
+         "  Passed attn check 1:         %d\n",
+         "  Received treatment:          %d\n",
+         "  ITT sample (passed AC2):     %d\n",
+         "  Final (completers):          %d\n"),
   nrow(d_all), nrow(d_passed_attn1), nrow(d_treated), nrow(d_itt), nrow(d)
 ))

@@ -8,12 +8,13 @@
 #   - Wrangle and save analysis datasets
 #   - Optionally link follow-up Qualtrics exports (Step 1b)
 #   - Print all statistical results to the console
-#   - Save Figure 1 to output/figures/main-results.png
+#   - Save figures to output/figures/ and tables to output/tables/
 #
 # For a more exploratory experience, step through each script interactively
 # in RStudio (in the order shown below).
 #
-# Prerequisites: run renv::restore() first to install required packages.
+# Prerequisites: run renv::restore() first to install required R packages,
+# and python3 text_analysis/restore.py for the text-comparison tables.
 # =============================================================================
 
 options(width = 200L)
@@ -79,13 +80,13 @@ cat("## Step 6: T2 analyses\n")
 cat("##########################################################################\n\n")
 source(here("scripts", "06_t2_analyses.R"))
 
-# Step 7: Main figure (Figure 1)
+# Step 7: Paper figures (IRS / ATEs, format interactions, BF equivalence)
 cat("\n##########################################################################\n")
-cat("## Step 7: Main figure\n")
+cat("## Step 7: Figures\n")
 cat("##########################################################################\n\n")
-source(here("scripts", "07_main_figure.R"))
+source(here("scripts", "07_figures.R"))
 
-# Step 8: Robustness checks
+# Step 8: Robustness checks (BCF + paper table)
 cat("\n##########################################################################\n")
 cat("## Step 8: Robustness checks\n")
 cat("##########################################################################\n\n")
@@ -103,8 +104,21 @@ cat("## Step 10: Cronbach's alpha\n")
 cat("##########################################################################\n\n")
 source(here("scripts", "10_cronbach_alpha.R"))
 
+# Step 11: Text comparison tables (Python; OSF texts + gpt4o_topic_labels.csv)
+cat("\n##########################################################################\n")
+cat("## Step 11: Text comparison tables\n")
+cat("##########################################################################\n\n")
+source(here("scripts", "11_text_metrics.R"))
+
 cat("\n====================================================================\n")
 cat("All analyses complete.\n")
-cat("Figure saved to: output/figures/main-results.png\n")
+cat("Figures saved to: output/figures/irs-and-ates.png, format-interactions.png,\n")
+cat("  bf-equivalence.png\n")
 cat("Forest-plot inputs saved to: output/intermediate/forest_t1.rds, forest_t2.rds\n")
+cat("Tables saved to: output/tables/\n")
+cat("  ate-bcf-robustness.tex / .csv / ate-bcf-bf01-long.csv\n")
+cat("  bf-prior-sensitivity.tex\n")
+cat("  mediation-persistence.tex\n")
+cat("  te-heterogeneity.tex\n")
+cat("  text-metrics.tex / text-metrics-control.tex\n")
 cat("====================================================================\n")

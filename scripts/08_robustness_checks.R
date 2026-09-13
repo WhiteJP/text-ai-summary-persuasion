@@ -1,396 +1,285 @@
 # =============================================================================
-# 08 · Robustness Checks: Baseline Carry-Forward (three scenarios)
+# 08 · Robustness Checks: Baseline Carry-Forward
 # =============================================================================
-# Re-estimates ATEs under baseline carry-forward across three scenarios:
-#   1. T1 BCF (ITT):            wave-1 post − pre, change = 0 for attriters
-#   2. T2 BCF (ITT):            follow-up − pre on full ITT, change = 0 if no FU
-#   3. T2 BCF (T1 completers):  follow-up − pre among T1 completers, change = 0 if no FU
+# Completers vs BCF on ITT (paper table):
+#   1. T1 completers vs T1 BCF (ITT: change = 0 for wave-1 attriters)
+#   2. T2 completers vs T2 BCF (ITT: change = 0 if no follow-up)
 #
-# Reports Cohen's d (ATE + text×format interaction), BF01 (medium priors),
-# and BF01 prior sensitivity grid for each scenario.
+# Cohen's d uses SD(pre) from wave-1 completers `d` and ate_flip from
+# forest_measure_specs() (same as Figures 1–2). Completers BF01s are the
+# files written by 05/06 (bf01_t1.csv / bf01_t2.csv).
+#
+# Writes:
+#   output/tables/ate-bcf-robustness.tex
+#   output/tables/ate-bcf-robustness.csv
+#   output/tables/ate-bcf-bf01-long.csv
 
 suppressPackageStartupMessages({
   library(dplyr)
   library(purrr)
-  library(estimatr)
-  library(broom)
   library(BayesFactor)
   library(tidyr)
+  library(readr)
 })
+
+source(here::here("scripts", "functions", "forest_measure_specs.R"))
+source(here::here("scripts", "functions", "forest_plot_estimates.R"))
+source(here::here("scripts", "functions", "analysis_helpers.R"))
 
 d_itt <- readRDS(here::here("data", "d_itt.rds"))
 d     <- readRDS(here::here("data", "d.rds"))
 
-# =============================================================================
-# DV specifications
-# =============================================================================
-
-dv_specs <- tribble(
-  ~change_dv,             ~pre_dv,              ~label,                    ~text_treatment,
-  "irs_approval_change",  "irs_approval_pre",   "IRS Favorability",        "Lewis",
-  "civil_service_change", "civil_service_pre",  "Civil Service Fav.",      "Lewis",
-  "doge_change",          "doge_pre_1",         "DOGE Disapproval",        "Lewis",
-  "trump_change",         "trump_pre_1",        "Trump Disapproval",       "Lewis",
-  "enforce_change",       "enforce_pre_1",      "IRS Funding Support",     "Lewis",
-  "fav_ssa_change",       "fav_ssa_pre_1",      "SSA Agent Fav.",          "Lewis",
-  "mvs_change",           "mvs_pre",            "Material Values",         "Haidt"
-)
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
-extract_ate <- function(change_dv, pre_dv, data, text_treatment) {
-  data_model <- data %>%
-    filter(!is.na(.data[[change_dv]]), !is.na(.data[[pre_dv]])) %>%
-    mutate(
-      text_treat  = ifelse(text == text_treatment, 1, 0),
-      format_eff  = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(.data[[pre_dv]]))
-    )
-  formula_str <- paste0(change_dv, " ~ text_treat * format_eff * pre_score_z")
-  mod <- lm_robust(as.formula(formula_str), data = data_model)
-  tidy(mod, conf.int = TRUE) %>%
-    filter(term == "text_treat") %>%
-    select(estimate, std.error, p.value, conf.low, conf.high)
-}
-
-extract_format_int <- function(change_dv, pre_dv, data, text_treatment) {
-  data_model <- data %>%
-    filter(!is.na(.data[[change_dv]]), !is.na(.data[[pre_dv]])) %>%
-    mutate(
-      text_treat  = ifelse(text == text_treatment, 1, 0),
-      format_eff  = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(.data[[pre_dv]]))
-    )
-  formula_str <- paste0(change_dv, " ~ text_treat * format_eff * pre_score_z")
-  mod <- lm_robust(as.formula(formula_str), data = data_model)
-  tidy(mod, conf.int = TRUE) %>%
-    filter(term == "text_treat:format_eff") %>%
-    slice(1) %>%
-    select(estimate, p.value, conf.low, conf.high)
-}
-
-sigstars <- function(p) {
-  dplyr::case_when(
-    p < 0.001 ~ "***", p < 0.01 ~ "**", p < 0.05 ~ "*", p < 0.1 ~ ".", TRUE ~ ""
+# Lewis / Cyber Sleuth outcomes only (Material Values reported in text).
+spec_forest <- forest_measure_specs()
+table_specs <- spec_forest |>
+  filter(.data$facet == "lewis") |>
+  transmute(
+    change_dv = .data$change_dv_t1,
+    pre_dv = .data$pre_dv,
+    label = .data$label,
+    text_treatment = .data$text_treatment,
+    ate_flip = as.integer(.data$ate_flip)
   )
-}
-
-fmt_d_ci <- function(d, lo, hi, p) {
-  sprintf("%.2f [%.2f, %.2f]%s", d, lo, hi, sigstars(p))
-}
-
-# =============================================================================
-# Baseline carry-forward dataset (T1)
-# =============================================================================
-
-d_cf <- d_itt
-for (cv in dv_specs$change_dv) {
-  d_cf[[cv]][!(d_cf$Finished %in% "1")] <- 0
-}
-
-# Pooled SD from completers (common denominator for T1 d)
-pooled_sds <- pmap_dfr(dv_specs, function(change_dv, pre_dv, label, text_treatment) {
-  tibble::tibble(DV = label, pooled_sd = sd(d[[pre_dv]], na.rm = TRUE))
-})
-
-# Orientation from completers ATE sign (positive = persuaded as intended)
-main_ates <- pmap_dfr(dv_specs, function(change_dv, pre_dv, label, text_treatment) {
-  extract_ate(change_dv, pre_dv, d, text_treatment) %>%
-    mutate(DV = label, .before = 1)
-})
-sign_map <- main_ates %>% transmute(DV, orient = ifelse(estimate >= 0, 1, -1))
-
-# =============================================================================
-# Three-scenario BCF: shared functions
-# =============================================================================
-
-compute_bf_with_pre_bcf3 <- function(outcome_col, pre_col, text_treatment, data,
-                                     rscale = "medium", rscale_cont = "medium",
-                                     seed = 88101L) {
-  set.seed(seed)
-
-  data_model <- data |>
-    mutate(
-      text_treat = factor(ifelse(text == text_treatment, 1, 0)),
-      format_eff = factor(format)
-    ) |>
-    select(
-      outcome = all_of(outcome_col),
-      pre_raw = all_of(pre_col),
-      text_treat,
-      format_eff
-    ) |>
-    drop_na() |>
-    mutate(pre_score_z = as.numeric(scale(pre_raw))) |>
-    select(outcome, pre_score_z, text_treat, format_eff)
-
-  df <- as.data.frame(data_model)
-
-  bf_full <- BayesFactor::lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff + text_treat:format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000L
+fu_specs <- spec_forest |>
+  filter(.data$facet == "lewis") |>
+  transmute(
+    change_dv = .data$change_dv_t2,
+    pre_dv = .data$pre_dv,
+    text_treatment = .data$text_treatment,
+    label = .data$label,
+    ate_flip = as.integer(.data$ate_flip)
   )
 
-  bf_additive <- BayesFactor::lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000L
-  )
-
-  bf_01 <- bf_additive / bf_full
-  BayesFactor::extractBF(bf_01)$bf
+fmt_d_ci_tex <- function(d, lo, hi, p) {
+  sprintf("%.2f [%.2f, %.2f]%s", d, lo, hi, sigstars(p, tex = TRUE))
 }
+fmt_bf <- function(bf) sprintf("%.2f", bf)
 
-rscale_grid_bcf3 <- c("medium" = 0.5, "wide" = sqrt(2) / 2, "ultrawide" = 1)
-
-apply_orient_bcf3 <- function(df, orient_tbl) {
-  df |>
-    left_join(orient_tbl, by = "DV") |>
-    mutate(
-      d = d * orient,
-      d_lo_raw = d_ci_low * orient,
-      d_hi_raw = d_ci_high * orient,
-      d_ci_low = pmin(d_lo_raw, d_hi_raw),
-      d_ci_high = pmax(d_lo_raw, d_hi_raw)
-    ) |>
-    select(-orient, -d_lo_raw, -d_hi_raw)
-}
-
-bcf3_freq_table <- function(
-    scenario_label,
-    data,
-    spec_df,
-    pooled_sds_df,
-    orient_tbl,
-    ref_change,
-    ref_pre
-) {
-  ate_raw <- pmap_dfr(spec_df, function(change_dv, pre_dv, label, text_treatment) {
-    extract_ate(change_dv, pre_dv, data, text_treatment) |>
-      mutate(DV = label, .before = 1)
-  })
-  int_raw <- pmap_dfr(spec_df, function(change_dv, pre_dv, label, text_treatment) {
-    extract_format_int(change_dv, pre_dv, data, text_treatment) |>
-      mutate(DV = label, .before = 1)
-  })
-  ate_d <- ate_raw |>
-    left_join(pooled_sds_df, by = "DV") |>
-    mutate(
-      d = estimate / pooled_sd,
-      d_ci_low = conf.low / pooled_sd,
-      d_ci_high = conf.high / pooled_sd
+run_coef_table <- function(data, spec_df) {
+  pmap_dfr(spec_df, function(change_dv, pre_dv, label, text_treatment, ate_flip) {
+    a <- persuasion_analysis(
+      change_dv, pre_dv, data, label = "",
+      text_treatment, ref_data = d
     )
-  ate_h <- apply_orient_bcf3(ate_d, orient_tbl)
-  int_d <- int_raw |>
-    left_join(pooled_sds_df, by = "DV") |>
-    mutate(
-      d = estimate / pooled_sd,
-      d_ci_low = conf.low / pooled_sd,
-      d_ci_high = conf.high / pooled_sd
-    )
-  int_h <- apply_orient_bcf3(int_d, orient_tbl)
-  n_reg <- sum(!is.na(data[[ref_change]]) & !is.na(data[[ref_pre]]))
-  tibble::tibble(
-    scenario = scenario_label,
-    DV = ate_h$DV,
-    ATE_d = fmt_d_ci(ate_h$d, ate_h$d_ci_low, ate_h$d_ci_high, ate_h$p.value),
-    TextFormat_d = fmt_d_ci(int_h$d, int_h$d_ci_low, int_h$d_ci_high, int_h$p.value),
-    n = n_reg
-  )
-}
-
-bcf3_bf_primary <- function(data, spec_df, scenario_label) {
-  pmap_dfr(spec_df, function(change_dv, pre_dv, label, text_treatment) {
-    tibble::tibble(
-      scenario = scenario_label,
-      DV = label,
-      bf_01 = compute_bf_with_pre_bcf3(change_dv, pre_dv, text_treatment, data)
-    )
-  })
-}
-
-bcf3_bf_sensitivity <- function(data, spec_df, scenario_label, seed_base) {
-  purrr::imap_dfr(rscale_grid_bcf3, function(rs, scale_name) {
-    pmap_dfr(spec_df, function(change_dv, pre_dv, label, text_treatment) {
+    t_ate <- orient_coef(a$text_coef, ate_flip, a$pooled_sd)
+    t_int <- orient_coef(a$interaction_coef, ate_flip, a$pooled_sd)
+    bind_rows(
       tibble::tibble(
-        scenario = scenario_label,
-        DV = label,
-        prior = scale_name,
-        bf_01 = compute_bf_with_pre_bcf3(
-          change_dv, pre_dv, text_treatment, data,
-          rscale = rs, rscale_cont = scale_name
-        )
+        DV = label, effect = "ATE",
+        d = t_ate$d, d_ci_low = t_ate$d_lo, d_ci_high = t_ate$d_hi,
+        p.value = t_ate$p,
+        cell = fmt_d_ci_tex(t_ate$d, t_ate$d_lo, t_ate$d_hi, t_ate$p)
+      ),
+      tibble::tibble(
+        DV = label, effect = "Interaction",
+        d = t_int$d, d_ci_low = t_int$d_lo, d_ci_high = t_int$d_hi,
+        p.value = t_int$p,
+        cell = fmt_d_ci_tex(t_int$d, t_int$d_lo, t_int$d_hi, t_int$p)
       )
-    })
-  })
-}
-
-bcf3_dv_pub <- function(x) {
-  dplyr::mutate(
-    x,
-    DV = dplyr::recode(
-      DV,
-      `Civil Service Fav.` = "Civil Service Favorability",
-      `SSA Agent Fav.` = "SSA Agent Favorability"
     )
-  )
+  })
 }
 
-# =============================================================================
-# Run three-scenario BCF analysis
-# =============================================================================
+run_bf_table <- function(data, spec_df, seed_base) {
+  map_dfr(seq_len(nrow(spec_df)), function(i) {
+    row <- spec_df[i, ]
+    cat(sprintf("  BF %s ...\n", row$label))
+    bf <- compute_bf_with_pre(
+      row$change_dv, row$pre_dv, row$text_treatment, data,
+      seed = seed_base + i
+    )
+    tibble::tibble(DV = row$label, bf_01 = bf, cell = fmt_bf(bf))
+  })
+}
 
-cat("\n=== Three-scenario BCF robustness (Cohen's d + BF01 + prior sensitivity) ===\n")
-cat("Baseline-carry-forward (BCF) imputes change = 0 for anyone who did not complete\n")
-cat("the relevant wave, providing an ITT-style bound on attrition bias.\n")
-cat("Three scenarios: (1) T1 BCF on full ITT, (2) T2 BCF on full ITT, (3) T2 BCF\n")
-cat("on T1 completers only. Each reports Cohen's d for the text ATE, BF01 for format\n")
-cat("equivalence (additive vs full model on change scores controlling for pre),\n")
-cat("and a prior-sensitivity grid (medium / wide / ultrawide JZS priors).\n")
+comp_d <- run_coef_table(d, table_specs)
 
-# --- Scenario 1: wave-1 post − pre, BCF on ITT ---
-freq_rows <- list(
-  bcf3_freq_table(
-    "T1 BCF (ITT)",
-    d_cf,
-    dv_specs,
-    pooled_sds,
-    sign_map,
-    dv_specs$change_dv[[1]],
-    dv_specs$pre_dv[[1]]
-  )
-)
-bf_prim_rows <- list(bcf3_bf_primary(d_cf, dv_specs, "T1 BCF (ITT)"))
-bf_sens_rows <- list(bcf3_bf_sensitivity(d_cf, dv_specs, "T1 BCF (ITT)", 88201L))
+d_cf_tbl <- d_itt
+for (cv in table_specs$change_dv) {
+  d_cf_tbl[[cv]][!(d_cf_tbl$Finished %in% "1")] <- 0
+}
+t1_bcf_d <- run_coef_table(d_cf_tbl, table_specs)
 
-# --- Follow-up specs & reference SD / orientation (shared T2) ---
-fu_w_path <- here::here("data", "d_with_followup.rds")
-itt_fu_path <- here::here("data", "d_itt_with_followup.rds")
-fu_specs_bcf3 <- NULL
-pooled_sds_t2 <- NULL
-orient_t2 <- NULL
-d_fu_comp_ref <- NULL
-d_wfu_bcf3 <- NULL
+d_wfu <- readRDS(here::here("data", "d_with_followup.rds"))
+d_fu <- d_wfu |>
+  filter(!is.na(ResponseId_fu), fu_completed_outcomes == 1L)
+t2_comp_d <- run_coef_table(d_fu, fu_specs)
 
-if (file.exists(fu_w_path) || file.exists(itt_fu_path)) {
-  source(here::here("scripts", "functions", "forest_measure_specs.R"))
-  spec_forest_bcf3 <- forest_measure_specs()
-  fu_specs_bcf3 <- spec_forest_bcf3 |>
-    dplyr::transmute(
-      change_dv = .data$change_dv_t2,
-      pre_dv = .data$pre_dv,
-      text_treatment = .data$text_treatment,
-      label = .data$label
+d_itt_wfu <- readRDS(here::here("data", "d_itt_with_followup.rds"))
+
+d_bcf_t2_itt <- d_itt_wfu
+no_t2 <- is.na(d_bcf_t2_itt$ResponseId_fu) |
+  !(d_bcf_t2_itt$Finished %in% "1") |
+  !(d_bcf_t2_itt$fu_completed_outcomes %in% 1L)
+for (cv in fu_specs$change_dv) {
+  d_bcf_t2_itt[[cv]][no_t2] <- 0
+}
+t2_itt_d <- run_coef_table(d_bcf_t2_itt, fu_specs)
+
+wide_from_freq <- function(effect_name) {
+  tibble::tibble(DV = table_specs$label) |>
+    left_join(
+      comp_d |> filter(effect == effect_name) |>
+        select(DV, `Completers (T1)` = cell),
+      by = "DV"
+    ) |>
+    left_join(
+      t1_bcf_d |> filter(effect == effect_name) |> select(DV, `T1 BCF (ITT)` = cell),
+      by = "DV"
+    ) |>
+    left_join(
+      t2_comp_d |> filter(effect == effect_name) |>
+        select(DV, `Completers (T2)` = cell),
+      by = "DV"
+    ) |>
+    left_join(
+      t2_itt_d |> filter(effect == effect_name) |> select(DV, `T2 BCF (ITT)` = cell),
+      by = "DV"
     )
 }
 
-if (!is.null(fu_specs_bcf3) && file.exists(fu_w_path)) {
-  d_wfu_bcf3 <- readRDS(fu_w_path) |>
-    dplyr::arrange(dplyr::desc(!is.na(.data$ResponseId_fu))) |>
-    dplyr::distinct(PROLIFIC_PID, .keep_all = TRUE)
-  d_fu_comp_ref <- d_wfu_bcf3 |> filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L)
-  pooled_sds_t2 <- pmap_dfr(fu_specs_bcf3, function(change_dv, pre_dv, label, text_treatment) {
-    tibble::tibble(DV = label, pooled_sd = stats::sd(d[[pre_dv]], na.rm = TRUE))
-  })
-  main_fu_ates_ref <- pmap_dfr(fu_specs_bcf3, function(change_dv, pre_dv, label, text_treatment) {
-    extract_ate(change_dv, pre_dv, d_fu_comp_ref, text_treatment) |>
-      mutate(DV = label, .before = 1)
-  })
-  orient_t2 <- main_fu_ates_ref |>
-    transmute(DV, orient = ifelse(estimate >= 0, 1, -1))
-}
+ate_wide <- wide_from_freq("ATE")
+int_wide <- wide_from_freq("Interaction")
 
-# --- Scenario 2: T2 BCF from wave-1 ITT ---
-if (!is.null(fu_specs_bcf3) && file.exists(itt_fu_path) && !is.null(orient_t2)) {
-  d_itt_wfu <- readRDS(itt_fu_path) |>
-    dplyr::arrange(dplyr::desc(.data$Finished == "1"), dplyr::desc(!is.na(.data$ResponseId_fu))) |>
-    dplyr::distinct(PROLIFIC_PID, .keep_all = TRUE)
-  d_bcf_t2_itt <- d_itt_wfu
-  no_t2_itt <- is.na(d_bcf_t2_itt$ResponseId_fu) |
-    !(d_bcf_t2_itt$Finished %in% "1") |
-    !(d_bcf_t2_itt$fu_completed_outcomes %in% 1L)
-  for (cv in fu_specs_bcf3$change_dv) {
-    d_bcf_t2_itt[[cv]][no_t2_itt] <- 0
-  }
-  freq_rows[[length(freq_rows) + 1L]] <- bcf3_freq_table(
-    "T2 BCF (ITT)",
-    d_bcf_t2_itt,
-    fu_specs_bcf3,
-    pooled_sds_t2,
-    orient_t2,
-    fu_specs_bcf3$change_dv[[1]],
-    fu_specs_bcf3$pre_dv[[1]]
-  )
-  bf_prim_rows[[length(bf_prim_rows) + 1L]] <- bcf3_bf_primary(
-    d_bcf_t2_itt, fu_specs_bcf3, "T2 BCF (ITT)"
-  )
-  bf_sens_rows[[length(bf_sens_rows) + 1L]] <- bcf3_bf_sensitivity(
-    d_bcf_t2_itt, fu_specs_bcf3, "T2 BCF (ITT)", 88401L
-  )
-} else if (!is.null(fu_specs_bcf3)) {
-  cat(
-    "Skipped T2 BCF (ITT): need d_itt_with_followup.rds and d_with_followup.rds ",
-    "(for T2 SD / orientation reference).\n",
-    sep = ""
+cat("\n=== Bayes factors (medium JZS; BF01 favors format equivalence) ===\n")
+bf_t1_path <- here::here("output", "tables", "bf01_t1.csv")
+bf_t2_path <- here::here("output", "tables", "bf01_t2.csv")
+if (!file.exists(bf_t1_path) || !file.exists(bf_t2_path)) {
+  stop(
+    "Missing bf01_t1.csv / bf01_t2.csv. Run scripts/05_t1_analyses.R and ",
+    "scripts/06_t2_analyses.R first (same forest_measure_specs as Figure 3).",
+    call. = FALSE
   )
 }
+cat("Completers (T1): using output/tables/bf01_t1.csv (matches Figure 3)\n")
+bf_comp <- read_csv(bf_t1_path, show_col_types = FALSE) |>
+  transmute(DV = label, bf_01 = bf_01, cell = fmt_bf(bf_01)) |>
+  filter(DV %in% table_specs$label)
+cat("T1 BCF:\n")
+bf_t1 <- run_bf_table(d_cf_tbl, table_specs, 88201L)
+cat("Completers (T2): using output/tables/bf01_t2.csv\n")
+bf_t2comp <- read_csv(bf_t2_path, show_col_types = FALSE) |>
+  transmute(DV = label, bf_01 = bf_01, cell = fmt_bf(bf_01)) |>
+  filter(DV %in% table_specs$label)
+cat("T2 BCF ITT:\n")
+bf_t2itt <- run_bf_table(d_bcf_t2_itt, fu_specs, 88401L)
 
-# --- Scenario 3: T2 BCF from T1 completers only ---
-if (!is.null(fu_specs_bcf3) && !is.null(d_wfu_bcf3) && !is.null(orient_t2)) {
-  d_bcf_t2_t1c <- d_wfu_bcf3
-  no_fu_t1c <- is.na(d_bcf_t2_t1c$ResponseId_fu) | !(d_bcf_t2_t1c$fu_completed_outcomes %in% 1L)
-  for (cv in fu_specs_bcf3$change_dv) {
-    d_bcf_t2_t1c[[cv]][no_fu_t1c] <- 0
-  }
-  freq_rows[[length(freq_rows) + 1L]] <- bcf3_freq_table(
-    "T2 BCF (T1 completers)",
-    d_bcf_t2_t1c,
-    fu_specs_bcf3,
-    pooled_sds_t2,
-    orient_t2,
-    fu_specs_bcf3$change_dv[[1]],
-    fu_specs_bcf3$pre_dv[[1]]
-  )
-  bf_prim_rows[[length(bf_prim_rows) + 1L]] <- bcf3_bf_primary(
-    d_bcf_t2_t1c, fu_specs_bcf3, "T2 BCF (T1 completers)"
-  )
-  bf_sens_rows[[length(bf_sens_rows) + 1L]] <- bcf3_bf_sensitivity(
-    d_bcf_t2_t1c, fu_specs_bcf3, "T2 BCF (T1 completers)", 88601L
-  )
-}
+bf_wide <- tibble::tibble(DV = table_specs$label) |>
+  left_join(bf_comp |> select(DV, `Completers (T1)` = cell), by = "DV") |>
+  left_join(bf_t1 |> select(DV, `T1 BCF (ITT)` = cell), by = "DV") |>
+  left_join(bf_t2comp |> select(DV, `Completers (T2)` = cell), by = "DV") |>
+  left_join(bf_t2itt |> select(DV, `T2 BCF (ITT)` = cell), by = "DV")
 
-# =============================================================================
-# Combine and print results
-# =============================================================================
-
-bcf3_freq_all <- bcf3_dv_pub(dplyr::bind_rows(freq_rows))
-bcf3_bf_prim_all <- bcf3_dv_pub(dplyr::bind_rows(bf_prim_rows))
-bcf3_bf_sens_wide <- dplyr::bind_rows(bf_sens_rows) |>
-  mutate(bf_fmt = sprintf("%.3f", bf_01)) |>
-  select(scenario, DV, prior, bf_fmt) |>
-  tidyr::pivot_wider(
-    names_from = prior,
-    values_from = bf_fmt,
-    names_prefix = "BF01_"
-  ) |>
-  bcf3_dv_pub()
-
-cat("\n--- Frequentist (harmonized Cohen's d [95% CI]) ---\n\n")
-print(as.data.frame(bcf3_freq_all), row.names = FALSE)
-
-cat("\n--- BF01 primary (rscaleFixed = rscaleCont = medium) ---\n\n")
-print(
-  as.data.frame(bcf3_bf_prim_all |> mutate(bf_01 = round(bf_01, 3))),
-  row.names = FALSE
+bf_long <- bind_rows(
+  bf_comp |> mutate(scenario = "Completers (T1)"),
+  bf_t1 |> mutate(scenario = "T1 BCF (ITT)"),
+  bf_t2comp |> mutate(scenario = "Completers (T2)"),
+  bf_t2itt |> mutate(scenario = "T2 BCF (ITT)")
 )
 
-cat("\n--- BF01 prior sensitivity (same rscale name for fixed + continuous) ---\n\n")
-print(as.data.frame(bcf3_bf_sens_wide), row.names = FALSE)
+n_comp <- nrow(d)
+n_itt <- nrow(d_itt)
+n_fu <- nrow(d_fu)
 
+row_tex <- function(wide_df) {
+  purrr::map_chr(seq_len(nrow(wide_df)), function(i) {
+    sprintf(
+      "   %s & %s & %s & %s & %s \\\\",
+      wide_df$DV[[i]],
+      wide_df$`Completers (T1)`[[i]],
+      wide_df$`T1 BCF (ITT)`[[i]],
+      wide_df$`Completers (T2)`[[i]],
+      wide_df$`T2 BCF (ITT)`[[i]]
+    )
+  })
+}
+
+col_heads <- sprintf(
+  paste0(
+    "  Outcome & \\shortstack{T1 Completers\\\\($N = %d$)} & ",
+    "\\shortstack{T1 BCF\\\\(ITT, $N = %d$)} & ",
+    "\\shortstack{T2 Completers\\\\($N = %d$)} & ",
+    "\\shortstack{T2 BCF\\\\(ITT, $N = %d$)} \\\\"
+  ),
+  n_comp, n_itt, n_fu, n_itt
+)
+
+note <- sprintf(
+  paste0(
+    "    \\footnotesize\\textit{Note.} Overall ATE and text $\\times$ format interactions are Cohen's $d$ (95\\%% CIs), ",
+    "standardized by pooled pre-treatment SD. Overall ATE is the text effect averaged across formats, where ",
+    "positive values indicate change in the predicted direction of persuasion. Text $\\times$ format interactions ",
+    "are the format contrast in that persuasion-oriented effect (positive = larger persuasive effects for full ",
+    "text than the AI summary). Bayes factors compare an additive model (no text $\\times$ format interaction) ",
+    "to a full interaction model on the same change scores (medium JZS priors); values $> 3$ are moderate ",
+    "evidence for format equivalence, values $> 1$ are anecdotal evidence. Baseline carried forward (BCF) ",
+    "analyses impute change $= 0$ for missing scores from ITT sample. T1 Completers and T2 Completers restate the results from the main analysis. ",
+    "$^{\\dagger}p < .10$, *$p < .05$, **$p < .01$, ***$p < .001$."
+  )
+)
+
+tex <- c(
+  "\\begin{table}[!htbp]",
+  "  \\centering",
+  paste0(
+    "  \\caption{Robustness to differential attrition using baseline-carried-forward (BCF) imputation.}"
+  ),
+  "  \\label{tab:robust-ate}",
+  "  \\footnotesize",
+  "  \\setlength{\\tabcolsep}{3.5pt}",
+  "  \\begin{tabular}{@{}lcccc@{}}",
+  "  \\toprule",
+  col_heads,
+  "  \\midrule",
+  "  \\multicolumn{5}{@{}l}{\\textbf{Overall ATE (averaged across formats)}} \\\\",
+  row_tex(ate_wide),
+  "  \\midrule",
+  paste0(
+    "  \\multicolumn{5}{@{}l}{\\textbf{Full text ATE $-$ AI summary ATE ",
+    "(text $\\times$ format interaction)}} \\\\"
+  ),
+  row_tex(int_wide),
+  "  \\midrule",
+  "  \\multicolumn{5}{@{}l}{\\textbf{Bayes factor for format equivalence ($BF_{01}$)}} \\\\",
+  row_tex(bf_wide),
+  "  \\bottomrule",
+  "  \\end{tabular}",
+  "  \\vspace{2pt}",
+  "  \\begin{minipage}{0.98\\linewidth}",
+  note,
+  "  \\end{minipage}",
+  "\\end{table}",
+  ""
+)
+
+fs::dir_create(here::here("output", "tables"))
+out_tex <- here::here("output", "tables", "ate-bcf-robustness.tex")
+out_csv <- here::here("output", "tables", "ate-bcf-robustness.csv")
+out_bf  <- here::here("output", "tables", "ate-bcf-bf01-long.csv")
+
+writeLines(tex, out_tex)
+write_csv(bf_long, out_bf)
+write_csv(
+  bind_rows(
+    ate_wide |> mutate(effect = "ATE", .before = 1),
+    int_wide |> mutate(effect = "Interaction", .before = 1),
+    bf_wide |> mutate(effect = "BF01", .before = 1)
+  ),
+  out_csv
+)
+
+cat("\n=== Overall ATE ===\n")
+print(as.data.frame(ate_wide), row.names = FALSE)
+cat("\n=== Full text ATE - AI summary ATE ===\n")
+print(as.data.frame(int_wide), row.names = FALSE)
+cat("\n=== BF01 (>1 favors format equivalence; >3 moderate) ===\n")
+print(as.data.frame(
+  bf_long |>
+    select(scenario, DV, bf_01) |>
+    mutate(bf_01 = round(bf_01, 2)) |>
+    tidyr::pivot_wider(names_from = scenario, values_from = bf_01)
+), row.names = FALSE)
+cat("\nNs: Completers (T1)=", n_comp,
+    " Completers (T2)=", n_fu,
+    " ITT=", n_itt, "\n", sep = "")
+cat("\nSaved:\n  ", out_tex, "\n  ", out_csv, "\n  ", out_bf, "\n", sep = "")

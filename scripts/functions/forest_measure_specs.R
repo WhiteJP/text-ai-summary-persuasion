@@ -1,4 +1,4 @@
-# Single source of truth for main-figure forest outcomes (panels A & B, T1 and T2).
+# Single source of truth for Figure 1B (ATEs) and Figure 2 (format interactions).
 #
 # Regression treatment coding (see forest_plot_estimates.R::persuasion_analysis):
 #   text_treat = 1 for the focal book, 0 for the other. For MVS / Pursuit of Happiness
@@ -10,7 +10,8 @@
 #   -1: flip the coef for the figure (e.g. DOGE/Trump disapproval coding; MVS so d aligns
 #       with the Lewis-panel “Lewis − Haidt” style for comparability across facets)
 #
-# Interaction panel B uses flip `ate_flip * -1` for every row (including MVS).
+# Interaction panel uses the same `ate_flip` as the ATE: format coding is Full = +0.5
+# (Summary = −0.5), so the raw text×format coef is Full − Summary.
 #
 # Cohen's d uses SD(pre) from wave-1 completers `d_ref` (see forest_plot_estimates.R).
 
@@ -32,4 +33,16 @@ forest_panel_labels <- function() {
     lewis = "Trt Text: 'Cyber Sleuth'",
     haidt = "Trt Text: 'Pursuit of Happiness'"
   )
+}
+
+#' DV rows for Bayes-factor loops (same labels / books as the forest specs).
+bf_measure_specs <- function(wave = c("t1", "t2")) {
+  wave <- match.arg(wave)
+  forest_measure_specs() |>
+    dplyr::transmute(
+      change_dv = if (wave == "t1") .data$change_dv_t1 else .data$change_dv_t2,
+      pre_dv = .data$pre_dv,
+      text_treatment = .data$text_treatment,
+      label = .data$label
+    )
 }

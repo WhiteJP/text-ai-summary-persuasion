@@ -140,7 +140,6 @@ if (nrow(d_attriters) > 0) {
 
 summ_fu_attrition <- function(dat, title) {
   cat(title, "\n")
-  dat <- dat |> distinct(PROLIFIC_PID, .keep_all = TRUE)
 
   rates <- dat |>
     group_by(text, format) |>
@@ -191,7 +190,6 @@ if (!file.exists(itt_fu_path) || !file.exists(comp_fu_path)) {
   # --- Report started-but-not-finished before filtering them out --------------
 
   report_fu_incomplete <- function(dat, label) {
-    dat <- dat |> distinct(PROLIFIC_PID, .keep_all = TRUE)
     n_total   <- nrow(dat)
     n_started <- sum(dat$fu_started)
     n_finished <- sum(dat$fu_finished)
@@ -209,7 +207,6 @@ if (!file.exists(itt_fu_path) || !file.exists(comp_fu_path)) {
   summ_within_fu_attrition <- function(dat, title) {
     cat(title, "\n")
     dat_started <- dat |>
-      distinct(PROLIFIC_PID, .keep_all = TRUE) |>
       filter(fu_started == 1L) |>
       mutate(fu_dropped = as.integer(fu_finished == 0L))
 

@@ -6,12 +6,14 @@
 #       change ~ text_treat * format_eff * z(pre); Cohen's d on SD(pre).
 #   (2) Binary above-midpoint LPM (rescaled persuasion-direction outcome
 #       y_above ~ text_treat * format_eff * z(pre); full sample), with
-#       lpm_pct_persuaded ≈ LPM est / pre_below_rate.
+#       lpm_pct_persuaded ≈ LPM est / pre_below_rate (T2 in 06 reuses this
+#       T1 rate via ref_data = d.rds).
 #   (3) SSA-within-format estimates (text effect within Full vs Summary).
 #   (4) Bayes factors for format equivalence (additive vs full on
 #       pre-controlled change), with medium / wide / ultrawide prior
 #       sensitivity (same comparison as T2 in 06_t2_analyses.R).
-#   (5) Forest-plot inputs for Figure 1 (T1 series) → output/intermediate/forest_t1.rds.
+#   (5) Forest-plot inputs for Figure 1B and Figure 2 (T1 series)
+#       → output/intermediate/forest_t1.rds.
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -24,6 +26,7 @@ suppressPackageStartupMessages({
 
 source(here::here("scripts", "functions", "forest_plot_estimates.R"))
 source(here::here("scripts", "functions", "forest_measure_specs.R"))
+source(here::here("scripts", "functions", "analysis_helpers.R"))
 
 d <- readRDS(here::here("data", "d.rds"))
 fs::dir_create(here::here("output", "intermediate"))
@@ -41,7 +44,7 @@ fav_ssa        <- persuasion_analysis("fav_ssa_change",       "fav_ssa_pre_1",  
 # Focal book = Pursuit of Happiness → text_treat: Haidt = 1, Lewis = 0
 mvs            <- persuasion_analysis("mvs_change",           "mvs_pre",           d, "Material Values",  "Haidt")
 
-# Order matches scripts/functions/forest_measure_specs.R (same as Figure 1 / T2).
+# Order matches scripts/functions/forest_measure_specs.R (same as Figures 1B / 2 / T2).
 spec_forest <- forest_measure_specs()
 analyses_t1 <- list(
   irs_approval,
@@ -79,8 +82,7 @@ ssa_within_format <- function(data, format_label, change_dv, pre_dv) {
   list(
     model = mod, coefs = coefs, text_coef = text_main,
     interaction_coef = int_coef, pooled_sd = pooled_sd,
-    flip = flip,
-    std_ate = flip * text_main$estimate / pooled_sd
+    flip = flip
   )
 }
 
@@ -91,39 +93,13 @@ ssa_summary <- ssa_within_format(d, "Summary", "fav_ssa_change", "fav_ssa_pre_1"
 # ATE summary table
 # =============================================================================
 
-sigstars <- function(p) {
-  dplyr::case_when(
-    p < 0.001 ~ "***", p < 0.01 ~ "**", p < 0.05 ~ "*", p < 0.1 ~ ".", TRUE ~ ""
-  )
-}
-
 cat("\n=== Average Treatment Effects (ATE) ===\n\n")
 cat("DV labels and signs match forest_measure_specs (ate_flip); Cohen's d = flip × b / SD(pre).\n")
 cat("Int = text × format interaction (Full − Summary difference).\n\n")
 
 ate_table <- purrr::map2_dfr(analyses_t1, seq_len(nrow(spec_forest)), function(a, i) {
   row <- spec_forest[i, ]
-  tc <- a$text_coef
-  ic <- a$interaction_coef
-  ate_f <- row$ate_flip
-  int_f <- ate_f * -1L
-  t_ate <- flip_robust_coef(tc, ate_f)
-  t_int <- flip_robust_coef(ic, int_f)
-  ate_d <- ate_f * a$std_ate
-  int_d <- if (nrow(ic) == 1L) int_f * ic$estimate / a$pooled_sd else NA_real_
-  if (nrow(tc) != 1L || nrow(ic) != 1L) {
-    warning("Unexpected coef rows for ", row$label, call. = FALSE)
-  }
-  sd_pre <- a$pooled_sd
-  tibble::tibble(
-    DV          = row$label,
-    `ATE (b)`   = if (nrow(tc) == 1L) sprintf("%.3f%s", t_ate$estimate, sigstars(tc$p.value)) else NA_character_,
-    `ATE d`     = if (nrow(tc) == 1L) sprintf("%.2f [%.2f, %.2f]", ate_d, t_ate$conf.low / sd_pre, t_ate$conf.high / sd_pre) else NA_character_,
-    `ATE p`     = if (nrow(tc) == 1L) round(tc$p.value, 5) else NA_real_,
-    `Int (b)`   = if (nrow(ic) == 1L) sprintf("%.3f%s", t_int$estimate, sigstars(ic$p.value)) else NA_character_,
-    `Int d`     = if (nrow(ic) == 1L) sprintf("%.2f [%.2f, %.2f]", int_d, t_int$conf.low / sd_pre, t_int$conf.high / sd_pre) else NA_character_,
-    `Int p`     = if (nrow(ic) == 1L) round(ic$p.value, 5) else NA_real_
-  )
+  ate_int_table_row(a, row$label, row$ate_flip)
 })
 
 print(as.data.frame(ate_table), row.names = FALSE)
@@ -131,52 +107,14 @@ print(as.data.frame(ate_table), row.names = FALSE)
 # =============================================================================
 # Binary above-midpoint LPM (full sample, persuasion-oriented rescaled scale)
 # =============================================================================
-# Rescaled pre/post: reverse-coded (8−x on 1–7, or 6−x on MVS 1–5) where needed
-# so higher = persuasion direction (same logic as Panel A forest signs).
-# y = 1 if rescaled post >= 4 (scale midpoint), 0 otherwise — full sample.
+# Rescaled pre/post so higher = persuasion (same signs as Panel A):
+#   1–7 items: 8−x when reverse=TRUE (DOGE / Trump disapproval)
+#   1–5 MVS:   6−x when reverse=TRUE (reduced materialism)
+# y = 1 if rescaled post >= midpoint: 4 on 1–7 scales, 3 on the 1–5 MVS.
 # LPM: y_above ~ text_treat * format_eff * pre_score_z.
 # pre_below_rate = P(below cut at pre), pooled = maximum possible pp shift.
 # lpm_pct_persuaded ≈ lpm_est / pre_below_rate (~ fraction of persuadable people persuaded,
 # assuming control stays at pre baseline; can exceed 1 if control moves opposite direction).
-
-rescale_persuasion <- function(x, reverse, scale_hi) {
-  if (reverse) scale_hi + 1 - x else x
-}
-
-binary_above_cut_lpm <- function(data, pre_col, post_col, reverse, scale_hi,
-                                 text_treatment, label, cut = 4) {
-  d_an <- data |>
-    transmute(
-      text, format,
-      pre_rs  = rescale_persuasion(.data[[pre_col]],  reverse, scale_hi),
-      post_rs = rescale_persuasion(.data[[post_col]], reverse, scale_hi)
-    ) |>
-    filter(!is.na(pre_rs), !is.na(post_rs)) |>
-    mutate(
-      y_above     = as.integer(post_rs >= cut),
-      y_above_pre = as.integer(pre_rs >= cut),
-      text_treat  = ifelse(text == text_treatment, 1L, 0L),
-      format_eff  = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(pre_rs))
-    )
-
-  pre_above_rate <- mean(d_an$y_above_pre, na.rm = TRUE)
-  pre_below_rate <- 1 - pre_above_rate
-
-  mod <- lm_robust(y_above ~ text_treat * format_eff * pre_score_z, data = d_an)
-  tc <- tidy(mod, conf.int = TRUE) |> dplyr::filter(term == "text_treat")
-  lpm_est <- tc$estimate[[1L]]
-
-  tibble::tibble(
-    DV = label,
-    n = nrow(d_an),
-    pre_pct_below = sprintf("%.1f", 100 * pre_below_rate),
-    lpm_pct_persuaded = lpm_est / pre_below_rate,
-    lpm_ate_text = sprintf("%.4f%s", lpm_est, sigstars(tc$p.value)),
-    ci_95 = sprintf("[%.4f, %.4f]", tc$conf.low, tc$conf.high),
-    p = round(tc$p.value, 5)
-  )
-}
 
 binary_es_specs <- tribble(
   ~label,                       ~pre_col,              ~post_col,            ~reverse, ~scale_hi, ~text_treatment, ~cut,
@@ -222,7 +160,6 @@ forest_specs <- purrr::map2(
     list(
       a = a,
       label = row$label,
-      pre = row$pre_dv,
       ate_flip = row$ate_flip,
       facet = row$facet
     )
@@ -234,24 +171,20 @@ cat("(fav_ssa_change ~ text * pre_score_z; pre_score_z from full sample)\n")
 cat("ATE / d: Lewis (Cyber Sleuth) − Haidt (Pursuit of Happiness), same as main table.\n\n")
 
 ssa_within_rows <- function(a, fmt_lab) {
-  tc <- a$text_coef
-  ic <- a$interaction_coef
-  f <- a$flip
-  est <- f * tc$estimate
-  ci_lo <- f * tc$conf.high
-  ci_hi <- f * tc$conf.low
+  t_ate <- orient_coef(a$text_coef, a$flip, a$pooled_sd)
+  t_int <- orient_coef(a$interaction_coef, a$flip, a$pooled_sd)
   tibble::tibble(
     Format       = fmt_lab,
-    `ATE (b)`    = sprintf("%.3f%s", est, sigstars(tc$p.value)),
-    `Cohen's d`  = sprintf("%.2f", a$std_ate),
-    `95% CI`     = sprintf("[%.3f, %.3f]", ci_lo, ci_hi),
-    p            = round(tc$p.value, 5),
-    `Pre × text` = if (nrow(ic) == 1) {
-      sprintf("%.3f%s", f * ic$estimate, sigstars(ic$p.value))
-    } else {
+    `ATE (b)`    = sprintf("%.3f%s", t_ate$estimate, sigstars(t_ate$p)),
+    `Cohen's d`  = sprintf("%.2f", t_ate$d),
+    `95% CI`     = sprintf("[%.3f, %.3f]", t_ate$conf.low, t_ate$conf.high),
+    p            = round(t_ate$p, 5),
+    `Pre × text` = if (is.na(t_int$estimate)) {
       NA_character_
+    } else {
+      sprintf("%.3f%s", t_int$estimate, sigstars(t_int$p))
     },
-    `Int. p`     = if (nrow(ic) == 1) round(ic$p.value, 5) else NA_real_
+    `Int. p`     = if (is.na(t_int$p)) NA_real_ else round(t_int$p, 5)
   )
 }
 
@@ -280,58 +213,7 @@ cat("BF01 > 1 favors H0 (no text × format interaction, i.e. format equivalence)
 cat("BF01 > 3 is conventionally 'moderate' evidence for equivalence.\n")
 cat("JZS priors: rscaleFixed = rscaleCont = medium (sensitivity analysis varies these).\n\n")
 
-compute_bf_with_pre <- function(outcome_col, pre_col, text_treatment, data,
-                                rscale = "medium", rscale_cont = "medium",
-                                seed = 417201L) {
-  set.seed(seed)
-
-  data_model <- data |>
-    mutate(
-      text_treat = factor(ifelse(text == text_treatment, 1, 0)),
-      format_eff = factor(format)
-    ) |>
-    select(
-      outcome = all_of(outcome_col),
-      pre_raw = all_of(pre_col),
-      text_treat,
-      format_eff
-    ) |>
-    drop_na() |>
-    mutate(pre_score_z = as.numeric(scale(pre_raw))) |>
-    select(outcome, pre_score_z, text_treat, format_eff)
-
-  df <- as.data.frame(data_model)
-
-  bf_full <- lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff + text_treat:format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000
-  )
-
-  bf_additive <- lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000
-  )
-
-  bf_01 <- bf_additive / bf_full
-  extractBF(bf_01)$bf
-}
-
-bf_specs <- tribble(
-  ~change_dv,             ~pre_dv,               ~text_treatment, ~label,
-  "irs_approval_change",  "irs_approval_pre",   "Lewis",         "IRS Favorability",
-  "enforce_change",       "enforce_pre_1",       "Lewis",         "IRS Funding Support",
-  "civil_service_change", "civil_service_pre",  "Lewis",         "Civil Service Favorability",
-  "fav_ssa_change",       "fav_ssa_pre_1",     "Lewis",         "SSA Agent Favorability",
-  "doge_change",          "doge_pre_1",        "Lewis",         "DOGE Disapproval",
-  "trump_change",         "trump_pre_1",       "Lewis",         "Trump Disapproval",
-  "mvs_change",           "mvs_pre",           "Haidt",         "Reduced Material Values"
-)
+bf_specs <- bf_measure_specs("t1")
 
 bf_primary <- pmap_dfr(bf_specs, function(change_dv, pre_dv, text_treatment, label) {
   tibble::tibble(
@@ -341,6 +223,10 @@ bf_primary <- pmap_dfr(bf_specs, function(change_dv, pre_dv, text_treatment, lab
 })
 print(as.data.frame(bf_primary |> mutate(bf_01 = round(bf_01, 2))))
 
+fs::dir_create(here::here("output", "tables"))
+readr::write_csv(bf_primary, here::here("output", "tables", "bf01_t1.csv"))
+cat("Saved: output/tables/bf01_t1.csv\n")
+
 # =============================================================================
 # BF prior sensitivity (same pre-controlled change specification as above)
 # =============================================================================
@@ -349,7 +235,7 @@ cat("\n\n=== BF01 Sensitivity (rscaleFixed / rscaleCont grids; pre-controlled ch
 
 rscale_grid <- c("medium" = 0.5, "wide" = sqrt(2) / 2, "ultrawide" = 1)
 
-bf_sensitivity_pre_change <- map_dfr(names(rscale_grid), function(scale_name) {
+bf_sensitivity_t1_long <- map_dfr(names(rscale_grid), function(scale_name) {
   pmap_dfr(bf_specs, function(change_dv, pre_dv, text_treatment, label) {
     tibble::tibble(
       DV    = label,
@@ -361,7 +247,15 @@ bf_sensitivity_pre_change <- map_dfr(names(rscale_grid), function(scale_name) {
       )
     )
   })
-}) |>
+})
+
+readr::write_csv(
+  bf_sensitivity_t1_long,
+  here::here("output", "tables", "bf01_sensitivity_t1.csv")
+)
+cat("Saved: output/tables/bf01_sensitivity_t1.csv\n")
+
+bf_sensitivity_pre_change <- bf_sensitivity_t1_long |>
   mutate(bf_fmt = sprintf("%.2f", bf_01)) |>
   select(DV, prior, bf_fmt) |>
   pivot_wider(names_from = prior, values_from = bf_fmt)
@@ -369,14 +263,15 @@ bf_sensitivity_pre_change <- map_dfr(names(rscale_grid), function(scale_name) {
 print(as.data.frame(bf_sensitivity_pre_change), row.names = FALSE)
 
 # =============================================================================
-# Forest plot inputs for Figure 1 (panels A & B) — consumed by 07_main_figure.R
+# Forest plot inputs for Figure 1B (ATEs) and Figure 2 (format interactions)
+# — consumed by 07_figures.R
 # =============================================================================
 
 ate_data <- purrr::map_dfr(seq_along(forest_specs), function(i) {
   x <- forest_specs[[i]]
   row <- spec_forest[i, ]
   panel <- if (row$facet == "lewis") lewis_panel else haidt_panel
-  extract_forest_coef(x$a, x$label, x$pre, panel, "ate", row$ate_flip, d)
+  extract_forest_coef(x$a, x$label, panel, "ate", row$ate_flip)
 }) |>
   mutate(
     label = factor(label, levels = rev(unique(label))),
@@ -387,10 +282,7 @@ int_data_fig <- purrr::map_dfr(seq_along(forest_specs), function(i) {
   x <- forest_specs[[i]]
   row <- spec_forest[i, ]
   panel <- if (row$facet == "lewis") lewis_panel else haidt_panel
-  extract_forest_coef(
-    x$a, x$label, x$pre, panel, "interaction",
-    row$ate_flip * -1L, d
-  )
+  extract_forest_coef(x$a, x$label, panel, "interaction", row$ate_flip)
 }) |>
   mutate(
     label = factor(label, levels = rev(unique(label))),

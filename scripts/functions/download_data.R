@@ -20,7 +20,12 @@ download_osf_data <- function(osf_node_id,
 
   if (!is.null(osf_path)) {
     message("Navigating to OSF path: ", osf_path)
-    all_files <- osfr::osf_ls_files(node, path = osf_path, n_max = Inf)
+    top <- osfr::osf_ls_files(node, n_max = Inf)
+    folder <- top[top$name == osf_path, , drop = FALSE]
+    if (nrow(folder) != 1L) {
+      stop("No folder named '", osf_path, "' on OSF node '", osf_node_id, "'.")
+    }
+    all_files <- osfr::osf_ls_files(folder, n_max = Inf)
   } else {
     all_files <- osfr::osf_ls_files(node, n_max = Inf)
   }

@@ -121,8 +121,7 @@ if (!file.exists(fu_path)) {
 
   cat("\n\n=== PART B: FOLLOW-UP SAMPLE (T2) ===\n")
   d_fu <- readRDS(fu_path) |>
-    filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L) |>
-    distinct(PROLIFIC_PID, .keep_all = TRUE)
+    filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L)
 
   # --- T2-only comprehension (Type III ANOVA) --------------------------------
 

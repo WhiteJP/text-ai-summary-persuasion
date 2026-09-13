@@ -3,22 +3,23 @@
 # =============================================================================
 # Requires: data/d_with_followup.rds and data/d_itt_with_followup.rds from
 # scripts/01b_link_followup_data.R (after 01_wrangle_data.R). Run after
-# scripts/05_t1_analyses.R. Forest inputs for Figure 1 → forest_t2.rds.
+# scripts/05_t1_analyses.R. Forest inputs for Figures 1B and 2 → forest_t2.rds.
 #
 # 01b left-joins follow-up Qualtrics exports to wave-1 d.rds and d_itt.rds only
 # (not d_all), writing d_with_followup.rds and d_itt_with_followup.rds.
 # Analytic sample here: wave-1 completers with non-missing ResponseId_fu and
-# all outcome measures completed (fu_completed_outcomes == 1),
-# one row per PROLIFIC_PID (duplicates dropped with a warning if present).
+# all outcome measures completed (fu_completed_outcomes == 1).
 #
 # Implements:
 #   (1) ATE at T2: change_score = t2 - t0 ~ text_treat * format_eff * pre_score_z
 #       (same coding as main experiment); HC2 robust SEs.
 #   (2) Binary above-midpoint LPM at T2 (rescaled persuasion-direction outcome
-#       y_above ~ text_treat * format_eff * pre_score_z; full sample).
+#       y_above ~ text_treat * format_eff * pre_score_z; follow-up completers).
+#       lpm_pct_persuaded uses T1 pre_below_rate from d.rds (same as Cohen's d).
 #   (3) BayesFactor equivalence (additive vs full) at T2, with prior-sensitivity
 #       grid (medium / wide / ultrawide JZS priors).
-#   (4) Forest-plot inputs for Figure 1 (T2 series) → output/intermediate/forest_t2.rds.
+#   (4) Forest-plot inputs for Figure 1B and Figure 2 (T2 series)
+#       → output/intermediate/forest_t2.rds.
 #   (5) Moderated mediation in lavaan: T1 = wave-1 post, T2 = fu. Persistence =
 #       T1→T2 (pers_*); direct text→T2 (dir_*); indirect a×b (ind_*). Moderation
 #       by format: pers_diff, dir_diff, ind_diff (Full−Summary). Averages:
@@ -40,26 +41,16 @@ suppressPackageStartupMessages({
 
 source(here::here("scripts", "functions", "forest_plot_estimates.R"))
 source(here::here("scripts", "functions", "forest_measure_specs.R"))
+source(here::here("scripts", "functions", "analysis_helpers.R"))
+source(here::here("scripts", "functions", "supplementary_tables.R"))
 d_ref <- readRDS(here::here("data", "d.rds"))
 
 # --------------------------------------------------------------------------- #
 # Data: wave-1 completers who completed follow-up
 # --------------------------------------------------------------------------- #
 
-d_fu_raw <- readRDS(here("data", "d_with_followup.rds")) |>
+d_fu <- readRDS(here("data", "d_with_followup.rds")) |>
   filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L)
-
-n_before_distinct <- nrow(d_fu_raw)
-dup_n <- n_before_distinct - dplyr::n_distinct(d_fu_raw$PROLIFIC_PID)
-if (dup_n > 0L) {
-  warning(
-    "Dropping ", dup_n, " duplicate row(s) for the same PROLIFIC_PID after ",
-    "follow-up filter (keeping first row per PID).",
-    call. = FALSE
-  )
-}
-d_fu <- d_fu_raw |>
-  distinct(PROLIFIC_PID, .keep_all = TRUE)
 
 cat("\n=== Follow-up analytic sample ===\n")
 cat("N (wave-1 completers with follow-up): ", nrow(d_fu), "\n\n")
@@ -67,94 +58,6 @@ cat("N (wave-1 completers with follow-up): ", nrow(d_fu), "\n\n")
 # --------------------------------------------------------------------------- #
 # Helpers (mirror T1; Cohen's d for figure uses SD(pre) from d.rds via d_ref)
 # --------------------------------------------------------------------------- #
-
-sigstars <- function(p) {
-  dplyr::case_when(
-    p < 0.001 ~ "***",
-    p < 0.01 ~ "**",
-    p < 0.05 ~ "*",
-    p < 0.1 ~ ".",
-    TRUE ~ ""
-  )
-}
-
-# text_treat: 1 = focal book, 0 = other (Haidt=1, Lewis=0 when text_treatment = "Haidt").
-# ref_data: dataset for SD(pre) denominator in Cohen's d (wave-1 completers for consistency).
-persuasion_analysis_t2 <- function(change_dv, pre_dv, data, label, text_treatment = "Lewis",
-                                   ref_data = NULL) {
-  data_model <- data |>
-    mutate(
-      text_treat = ifelse(text == text_treatment, 1L, 0L),
-      format_eff = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(.data[[pre_dv]]))
-    ) |>
-    filter(!is.na(.data[[change_dv]]), !is.na(.data[[pre_dv]]))
-
-  formula_str <- paste0(change_dv, " ~ text_treat * format_eff * pre_score_z")
-  mod <- lm_robust(as.formula(formula_str), data = data_model)
-  lm_mod <- lm(as.formula(formula_str), data = data_model)
-
-  coefs <- broom::tidy(mod, conf.int = TRUE)
-  text_coef <- coefs |> dplyr::filter(term == "text_treat")
-  interaction_coef <- coefs |> dplyr::filter(term == "text_treat:format_eff")
-
-  sd_source <- if (!is.null(ref_data)) ref_data else data_model
-  pooled_sd <- stats::sd(sd_source[[pre_dv]], na.rm = TRUE)
-  std_ate <- if (nrow(text_coef) == 1L) text_coef$estimate / pooled_sd else NA_real_
-
-  list(
-    model = mod,
-    lm_model = lm_mod,
-    coefs = coefs,
-    text_coef = text_coef,
-    interaction_coef = interaction_coef,
-    pooled_sd = pooled_sd,
-    std_ate = std_ate,
-    label = label
-  )
-}
-
-compute_bf_with_pre <- function(outcome_col, pre_col, text_treatment, data,
-                                rscale = "medium", rscale_cont = "medium",
-                                seed = 270387L) {
-  set.seed(seed)
-
-  data_model <- data |>
-    mutate(
-      text_treat = factor(ifelse(text == text_treatment, 1, 0)),
-      format_eff = factor(format)
-    ) |>
-    select(
-      outcome = all_of(outcome_col),
-      pre_raw = all_of(pre_col),
-      text_treat,
-      format_eff
-    ) |>
-    drop_na() |>
-    mutate(pre_score_z = as.numeric(scale(pre_raw))) |>
-    select(outcome, pre_score_z, text_treat, format_eff)
-
-  df <- as.data.frame(data_model)
-
-  bf_full <- BayesFactor::lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff + text_treat:format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000L
-  )
-
-  bf_additive <- BayesFactor::lmBF(
-    outcome ~ pre_score_z + text_treat + format_eff,
-    data = df,
-    rscaleFixed = rscale,
-    rscaleCont = rscale_cont,
-    iterations = 50000L
-  )
-
-  bf_01 <- bf_additive / bf_full
-  BayesFactor::extractBF(bf_01)$bf
-}
 
 rscale_grid <- c("medium" = 0.5, "wide" = sqrt(2) / 2, "ultrawide" = 1)
 
@@ -175,7 +78,7 @@ fu_specs <- spec_forest |>
 t2_fit <- pmap(
   fu_specs,
   function(change_dv, pre_dv, text_treatment, label, ate_flip) {
-    persuasion_analysis_t2(change_dv, pre_dv, d_fu, label, text_treatment, ref_data = d_ref)
+    persuasion_analysis(change_dv, pre_dv, d_fu, label, text_treatment, ref_data = d_ref)
   }
 )
 
@@ -184,30 +87,8 @@ cat("DV labels and signs match forest_measure_specs (ate_flip); Cohen's d = flip
 cat("Change = follow-up − pre; HC2 robust SEs. Int = text × format interaction.\n\n")
 
 ate_tbl <- imap_dfr(t2_fit, function(a, i) {
-  idx <- as.integer(i)
-  row <- fu_specs[idx, ]
-  lab <- row$label
-  ate_f <- row$ate_flip
-  int_f <- ate_f * -1L
-  tc <- a$text_coef
-  ic <- a$interaction_coef
-  t_ate <- flip_robust_coef(tc, ate_f)
-  t_int <- flip_robust_coef(ic, int_f)
-  ate_d <- ate_f * a$std_ate
-  int_d <- if (nrow(ic) == 1L) int_f * ic$estimate / a$pooled_sd else NA_real_
-  if (nrow(tc) != 1L || nrow(ic) != 1L) {
-    warning("Unexpected coef rows for ", lab, call. = FALSE)
-  }
-  sd_pre <- a$pooled_sd
-  tibble::tibble(
-    DV        = lab,
-    `ATE (b)` = if (nrow(tc) == 1L) sprintf("%.3f%s", t_ate$estimate, sigstars(tc$p.value)) else NA_character_,
-    `ATE d`   = if (nrow(tc) == 1L) sprintf("%.2f [%.2f, %.2f]", ate_d, t_ate$conf.low / sd_pre, t_ate$conf.high / sd_pre) else NA_character_,
-    `ATE p`   = if (nrow(tc) == 1L) round(tc$p.value, 5) else NA_real_,
-    `Int (b)` = if (nrow(ic) == 1L) sprintf("%.3f%s", t_int$estimate, sigstars(ic$p.value)) else NA_character_,
-    `Int d`   = if (nrow(ic) == 1L) sprintf("%.2f [%.2f, %.2f]", int_d, t_int$conf.low / sd_pre, t_int$conf.high / sd_pre) else NA_character_,
-    `Int p`   = if (nrow(ic) == 1L) round(ic$p.value, 5) else NA_real_
-  )
+  row <- fu_specs[as.integer(i), ]
+  ate_int_table_row(a, row$label, row$ate_flip)
 })
 
 print(as.data.frame(ate_tbl), row.names = FALSE)
@@ -215,45 +96,7 @@ print(as.data.frame(ate_tbl), row.names = FALSE)
 # --------------------------------------------------------------------------- #
 # Binary above-midpoint LPM at T2 (full sample, persuasion-oriented rescaled)
 # --------------------------------------------------------------------------- #
-
-rescale_persuasion <- function(x, reverse, scale_hi) {
-  if (reverse) scale_hi + 1 - x else x
-}
-
-binary_above_cut_lpm <- function(data, pre_col, post_col, reverse, scale_hi,
-                                 text_treatment, label, cut = 4) {
-  d_an <- data |>
-    transmute(
-      text, format,
-      pre_rs = rescale_persuasion(.data[[pre_col]], reverse, scale_hi),
-      post_rs = rescale_persuasion(.data[[post_col]], reverse, scale_hi)
-    ) |>
-    filter(!is.na(pre_rs), !is.na(post_rs)) |>
-    mutate(
-      y_above     = as.integer(post_rs >= cut),
-      y_above_pre = as.integer(pre_rs >= cut),
-      text_treat  = ifelse(text == text_treatment, 1L, 0L),
-      format_eff  = ifelse(format == "Full", -0.5, 0.5),
-      pre_score_z = as.numeric(scale(pre_rs))
-    )
-
-  pre_above_rate <- mean(d_an$y_above_pre, na.rm = TRUE)
-  pre_below_rate <- 1 - pre_above_rate
-
-  mod <- lm_robust(y_above ~ text_treat * format_eff * pre_score_z, data = d_an)
-  tc <- tidy(mod, conf.int = TRUE) |> dplyr::filter(term == "text_treat")
-  lpm_est <- tc$estimate[[1L]]
-
-  tibble::tibble(
-    DV = label,
-    n = nrow(d_an),
-    pre_pct_below = sprintf("%.1f", 100 * pre_below_rate),
-    lpm_pct_persuaded = lpm_est / pre_below_rate,
-    lpm_ate_text = sprintf("%.4f%s", lpm_est, sigstars(tc$p.value)),
-    ci_95 = sprintf("[%.4f, %.4f]", tc$conf.low, tc$conf.high),
-    p = round(tc$p.value, 5)
-  )
-}
+# Same recodes as T1: 8−x on 1–7 (cut = 4); 6−x on 1–5 MVS (cut = 3).
 
 binary_es_specs_t2 <- tribble(
   ~label, ~pre_col, ~post_col, ~reverse, ~scale_hi, ~text_treatment, ~cut,
@@ -270,14 +113,17 @@ cat("\n=== Binary above-midpoint LPM at T2 (rescaled FU post >= cut; full sample
 cat("Cut = scale midpoint (4 for 1–7 scales, 3 for 1–5 MVS).\n")
 cat("LPM: y_above ~ text_treat * format_eff * pre_score_z.\n")
 cat("text_treat = 1 for the focal book in each row.\n")
-cat("pre_pct_below = % below cut at pre (pooled) = room to move.\n")
-cat("lpm_pct_persuaded ≈ LPM est / pre_below_rate (~fraction of persuadable people persuaded;\n")
+cat("pre_pct_below = % below cut at pre in wave-1 completers (d.rds) = room to move.\n")
+cat("lpm_pct_persuaded ≈ LPM est / T1 pre_below_rate (same denominator as T1;\n")
 cat("  assumes control stays at pre baseline; can exceed 100% if control moves opposite direction).\n\n")
 
 binary_tbl_t2 <- pmap_dfr(
   binary_es_specs_t2,
   function(label, pre_col, post_col, reverse, scale_hi, text_treatment, cut) {
-    binary_above_cut_lpm(d_fu, pre_col, post_col, reverse, scale_hi, text_treatment, label, cut)
+    binary_above_cut_lpm(
+      d_fu, pre_col, post_col, reverse, scale_hi, text_treatment, label, cut,
+      ref_data = d_ref
+    )
   }
 ) |> arrange(DV)
 
@@ -302,11 +148,18 @@ bf_t2_primary <- pmap_dfr(
   function(change_dv, pre_dv, text_treatment, label, ate_flip) {
     tibble::tibble(
       label = label,
-      bf_01 = compute_bf_with_pre(change_dv, pre_dv, text_treatment, d_fu)
+      bf_01 = compute_bf_with_pre(
+        change_dv, pre_dv, text_treatment, d_fu,
+        seed = 270387L
+      )
     )
   }
 )
 print(as.data.frame(bf_t2_primary |> mutate(bf_01 = round(bf_01, 3))), row.names = FALSE)
+
+fs::dir_create(here::here("output", "tables"))
+readr::write_csv(bf_t2_primary, here::here("output", "tables", "bf01_t2.csv"))
+cat("Saved: output/tables/bf01_t2.csv\n")
 
 cat("\n=== BF01 sensitivity (rscaleFixed / rscaleCont grids, pre-controlled) ===\n\n")
 
@@ -321,22 +174,49 @@ for (scale_name in names(rscale_grid)) {
         prior = scale_name,
         bf_01 = compute_bf_with_pre(
           change_dv, pre_dv, text_treatment, d_fu,
-          rscale = rs, rscale_cont = scale_name
+          rscale = rs, rscale_cont = scale_name,
+          seed = 270387L
         )
       )
     }
   )
   bf_sens_rows[[scale_name]] <- row
 }
-bf_sens <- bind_rows(bf_sens_rows) |>
+bf_sensitivity_t2_long <- bind_rows(bf_sens_rows)
+
+readr::write_csv(
+  bf_sensitivity_t2_long,
+  here::here("output", "tables", "bf01_sensitivity_t2.csv")
+)
+cat("Saved: output/tables/bf01_sensitivity_t2.csv\n")
+
+bf_sens <- bf_sensitivity_t2_long |>
   mutate(bf_fmt = sprintf("%.2f", bf_01)) |>
   select(DV, prior, bf_fmt) |>
   tidyr::pivot_wider(names_from = prior, values_from = bf_fmt)
 
 print(as.data.frame(bf_sens), row.names = FALSE)
 
+# Combined T1+T2 prior-sensitivity LaTeX table for the paper SM
+t1_sens_path <- here::here("output", "tables", "bf01_sensitivity_t1.csv")
+if (file.exists(t1_sens_path)) {
+  bf_sensitivity_t1_long <- readr::read_csv(t1_sens_path, show_col_types = FALSE)
+  write_bf_prior_sensitivity_tex(
+    bf_sensitivity_t1_long,
+    bf_sensitivity_t2_long,
+    here::here("output", "tables", "bf-prior-sensitivity.tex")
+  )
+  cat("Saved: output/tables/bf-prior-sensitivity.tex\n")
+} else {
+  cat(
+    "Skipped bf-prior-sensitivity.tex: run scripts/05_t1_analyses.R first ",
+    "(missing output/tables/bf01_sensitivity_t1.csv).\n",
+    sep = ""
+  )
+}
+
 # --------------------------------------------------------------------------- #
-# Forest plot inputs for Figure 1 panels A & B (T2 series)
+# Forest plot inputs for Figure 1B and Figure 2 (T2 series)
 # --------------------------------------------------------------------------- #
 # Same labels, facet, and ate_flip as T1 (forest_measure_specs.R).
 
@@ -349,7 +229,7 @@ stopifnot(length(t2_fit) == nrow(spec_forest))
 ate_data_t2 <- purrr::map_dfr(seq_len(nrow(spec_forest)), function(i) {
   row <- spec_forest[i, ]
   panel <- if (row$facet == "lewis") lewis_panel else haidt_panel
-  extract_forest_coef(t2_fit[[i]], row$label, row$pre_dv, panel, "ate", row$ate_flip, d_ref)
+  extract_forest_coef(t2_fit[[i]], row$label, panel, "ate", row$ate_flip)
 }) |>
   mutate(
     label = factor(label, levels = rev(unique(label))),
@@ -359,10 +239,7 @@ ate_data_t2 <- purrr::map_dfr(seq_len(nrow(spec_forest)), function(i) {
 int_data_t2 <- purrr::map_dfr(seq_len(nrow(spec_forest)), function(i) {
   row <- spec_forest[i, ]
   panel <- if (row$facet == "lewis") lewis_panel else haidt_panel
-  extract_forest_coef(
-    t2_fit[[i]], row$label, row$pre_dv, panel, "interaction",
-    row$ate_flip * -1L, d_ref
-  )
+  extract_forest_coef(t2_fit[[i]], row$label, panel, "interaction", row$ate_flip)
 }) |>
   mutate(
     label = factor(label, levels = rev(unique(label))),
@@ -390,15 +267,15 @@ med_model <- "
   T1 ~ a1*text_treat + a2*format_eff + a3*tx_fmt + a4*pre0
   T2 ~ b1*T1 + b2*format_eff + b3*t1_fmt + b4*text_treat + b5*tx_fmt + b6*pre0
 
-  pers_full := b1 + b3*(-0.5)
-  pers_sum  := b1 + b3*(0.5)
+  pers_full := b1 + b3*(0.5)
+  pers_sum  := b1 + b3*(-0.5)
   pers_diff := pers_full - pers_sum
   pers_mean := (pers_full + pers_sum) / 2
 
-  ind_full := (a1 + a3*(-0.5))*(b1 + b3*(-0.5))
-  dir_full := b4 + b5*(-0.5)
-  ind_sum  := (a1 + a3*(0.5))*(b1 + b3*(0.5))
-  dir_sum  := b4 + b5*(0.5)
+  ind_full := (a1 + a3*(0.5))*(b1 + b3*(0.5))
+  dir_full := b4 + b5*(0.5)
+  ind_sum  := (a1 + a3*(-0.5))*(b1 + b3*(-0.5))
+  dir_sum  := b4 + b5*(-0.5)
   ind_diff := ind_full - ind_sum
   dir_diff := dir_full - dir_sum
   ind_mean := (ind_full + ind_sum) / 2
@@ -424,8 +301,8 @@ run_mediation <- function(t1_col, t2_col, pre_col, label, text_treatment = "Lewi
                           use_bootstrap = TRUE) {
   dat <- d_fu |>
     mutate(
-      text_treat = ifelse(text == text_treatment, 1L, 0L),
-      format_eff = ifelse(format == "Full", -0.5, 0.5)
+      text_treat = code_text_treat(text, text_treatment),
+      format_eff = code_format_eff(format)
     ) |>
     transmute(
       T1 = .data[[t1_col]],
@@ -441,8 +318,23 @@ run_mediation <- function(t1_col, t2_col, pre_col, label, text_treatment = "Lewi
       is.finite(text_treat), is.finite(format_eff)
     )
 
+  empty_row <- function(note, status) {
+    tibble::tibble(
+      DV = label, note = note, status = status, n = nrow(dat),
+      pers_est = NA_real_, pers_lo = NA_real_, pers_hi = NA_real_, pers_p = NA_real_,
+      dir_est = NA_real_, dir_lo = NA_real_, dir_hi = NA_real_, dir_p = NA_real_,
+      ind_est = NA_real_, ind_lo = NA_real_, ind_hi = NA_real_, ind_p = NA_real_,
+      pers_diff_est = NA_real_, pers_diff_lo = NA_real_, pers_diff_hi = NA_real_,
+      pers_diff_p = NA_real_,
+      dir_diff_est = NA_real_, dir_diff_lo = NA_real_, dir_diff_hi = NA_real_,
+      dir_diff_p = NA_real_,
+      ind_diff_est = NA_real_, ind_diff_lo = NA_real_, ind_diff_hi = NA_real_,
+      ind_diff_p = NA_real_
+    )
+  }
+
   if (nrow(dat) < 30L) {
-    return(tibble::tibble(DV = label, note = "insufficient N", status = "skip"))
+    return(empty_row("insufficient N", "skip"))
   }
 
   if (use_bootstrap) {
@@ -469,7 +361,7 @@ run_mediation <- function(t1_col, t2_col, pre_col, label, text_treatment = "Lewi
   )
 
   if (inherits(fit, "try-error")) {
-    return(tibble::tibble(DV = label, note = "lavaan error", status = "fail"))
+    return(empty_row("lavaan error", "fail"))
   }
 
   pe_args <- list(
@@ -544,7 +436,36 @@ run_mediation <- function(t1_col, t2_col, pre_col, label, text_treatment = "Lewi
     print_row(v, det_est[[v]])
   }
 
-  invisible(TRUE)
+  tibble::tibble(
+    DV = label,
+    note = NA_character_,
+    status = "ok",
+    n = nrow(dat),
+    pers_est = unname(avg_est$pers_mean["est"]),
+    pers_lo = unname(avg_est$pers_mean["lo"]),
+    pers_hi = unname(avg_est$pers_mean["hi"]),
+    pers_p = unname(avg_est$pers_mean["p"]),
+    dir_est = unname(avg_est$dir_mean["est"]),
+    dir_lo = unname(avg_est$dir_mean["lo"]),
+    dir_hi = unname(avg_est$dir_mean["hi"]),
+    dir_p = unname(avg_est$dir_mean["p"]),
+    ind_est = unname(avg_est$ind_mean["est"]),
+    ind_lo = unname(avg_est$ind_mean["lo"]),
+    ind_hi = unname(avg_est$ind_mean["hi"]),
+    ind_p = unname(avg_est$ind_mean["p"]),
+    pers_diff_est = unname(mod_est$pers_diff["est"]),
+    pers_diff_lo = unname(mod_est$pers_diff["lo"]),
+    pers_diff_hi = unname(mod_est$pers_diff["hi"]),
+    pers_diff_p = unname(mod_est$pers_diff["p"]),
+    dir_diff_est = unname(mod_est$dir_diff["est"]),
+    dir_diff_lo = unname(mod_est$dir_diff["lo"]),
+    dir_diff_hi = unname(mod_est$dir_diff["hi"]),
+    dir_diff_p = unname(mod_est$dir_diff["p"]),
+    ind_diff_est = unname(mod_est$ind_diff["est"]),
+    ind_diff_lo = unname(mod_est$ind_diff["lo"]),
+    ind_diff_hi = unname(mod_est$ind_diff["hi"]),
+    ind_diff_p = unname(mod_est$ind_diff["p"])
+  )
 }
 
 med_specs <- tribble(
@@ -558,7 +479,7 @@ med_specs <- tribble(
   "mvs_post", "mvs_t2", "mvs_pre", "Material Values", "Haidt"
 )
 
-pwalk(
+med_results <- pmap_dfr(
   med_specs,
   function(t1_col, t2_col, pre_col, label, text_treatment) {
     run_mediation(t1_col, t2_col, pre_col, label, text_treatment,
@@ -566,6 +487,19 @@ pwalk(
     )
   }
 )
+
+readr::write_csv(
+  med_results,
+  here::here("output", "tables", "mediation-persistence.csv")
+)
+cat("\nSaved: output/tables/mediation-persistence.csv\n")
+
+write_mediation_persistence_tex(
+  med_results |> dplyr::filter(status == "ok"),
+  here::here("output", "tables", "mediation-persistence.tex"),
+  n_fu = nrow(d_fu)
+)
+cat("Saved: output/tables/mediation-persistence.tex\n")
 
 cat("\n(Workflow: inspect pers_diff & dir_diff; if both ~0, emphasize pers_mean & dir_mean vs 0; else\n")
 cat(" emphasize pers_full/pers_sum and dir_full/dir_sum vs 0. ind_* = indirect a×b path; parallel logic.)\n")
@@ -576,10 +510,9 @@ cat(" emphasize pers_full/pers_sum and dir_full/dir_sum vs 0. ind_* = indirect a
 # Same specification as scripts/05_t1_analyses.R (HC2 robust SEs): wave-1
 # post − pre ~ text_treat * format_eff * z(pre). Sample = d_fu only.
 #
-# DV labels match forest_measure_specs() (Figure 1). Raw coefs are on the
-# survey scale (e.g. approval change); ate_flip aligns printed ATE / d / CIs /
-# interaction with the figure’s persuasion-direction convention (same as
-# extract_forest_coef flip), so signs match the outcome wording.
+# DV labels match forest_measure_specs() (Figures 1B and 2). Raw coefs are on the
+# survey scale (e.g. approval change); ate_int_table_row / orient_coef apply
+# ate_flip so printed ATE / d / CIs match the figure’s persuasion direction.
 
 cat("\n\n=== T1 reanalysis with follow-up sample (wave-1 change; N = follow-up completers) ===\n\n")
 
@@ -599,38 +532,8 @@ t1_fu_fit <- pmap(
   }
 )
 
-flip_ci <- function(fl, low, high) {
-  c(
-    lo = min(fl * low, fl * high, na.rm = TRUE),
-    hi = max(fl * low, fl * high, na.rm = TRUE)
-  )
-}
-
 ate_tbl_t1_fu <- imap_dfr(t1_fu_fit, function(a, i) {
-  lab <- t1_fu_specs$label[[i]]
-  fl <- t1_fu_specs$ate_flip[[i]]
-  int_f <- fl * -1L
-  tc <- a$text_coef
-  ic <- a$interaction_coef
-  if (nrow(tc) != 1L || nrow(ic) != 1L) {
-    warning("Unexpected coef rows for T1 FU reanalysis: ", lab, call. = FALSE)
-  }
-  sd_pre <- a$pooled_sd
-  ate <- if (nrow(tc) == 1L) fl * tc$estimate else NA_real_
-  ate_d <- if (nrow(tc) == 1L) fl * a$std_ate else NA_real_
-  ci_tc <- if (nrow(tc) == 1L) flip_ci(fl, tc$conf.low, tc$conf.high) else c(lo = NA, hi = NA)
-  int_est <- if (nrow(ic) == 1L) int_f * ic$estimate else NA_real_
-  int_d <- if (nrow(ic) == 1L) int_f * ic$estimate / sd_pre else NA_real_
-  ci_ic <- if (nrow(ic) == 1L) flip_ci(int_f, ic$conf.low, ic$conf.high) else c(lo = NA, hi = NA)
-  tibble::tibble(
-    DV        = lab,
-    `ATE (b)` = if (nrow(tc) == 1L) sprintf("%.3f%s", ate, sigstars(tc$p.value)) else NA_character_,
-    `ATE d`   = if (nrow(tc) == 1L) sprintf("%.2f [%.2f, %.2f]", ate_d, ci_tc[["lo"]] / sd_pre, ci_tc[["hi"]] / sd_pre) else NA_character_,
-    `ATE p`   = if (nrow(tc) == 1L) round(tc$p.value, 5) else NA_real_,
-    `Int (b)` = if (nrow(ic) == 1L) sprintf("%.3f%s", int_est, sigstars(ic$p.value)) else NA_character_,
-    `Int d`   = if (nrow(ic) == 1L) sprintf("%.2f [%.2f, %.2f]", int_d, ci_ic[["lo"]] / sd_pre, ci_ic[["hi"]] / sd_pre) else NA_character_,
-    `Int p`   = if (nrow(ic) == 1L) round(ic$p.value, 5) else NA_real_
-  )
+  ate_int_table_row(a, t1_fu_specs$label[[i]], t1_fu_specs$ate_flip[[i]])
 })
 
 print(as.data.frame(ate_tbl_t1_fu), row.names = FALSE)

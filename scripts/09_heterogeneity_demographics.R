@@ -13,9 +13,13 @@
 suppressPackageStartupMessages({
   library(dplyr)
   library(purrr)
+  library(tidyr)
   library(estimatr)
   library(broom)
+  library(readr)
 })
+
+source(here::here("scripts", "functions", "analysis_helpers.R"))
 
 d <- readRDS(here::here("data", "d.rds"))
 
@@ -66,7 +70,7 @@ estimate_het_one_mod <- function(data, change_dv, pre_dv, text_treatment, modera
     ) %>%
     mutate(
       .outcome = .data[[change_dv]],
-      .treat = as.numeric(text == text_treatment),
+      .treat = code_text_treat(text, text_treatment),
       .pre_z = as.numeric(scale(.data[[pre_dv]]))
     )
 
@@ -107,12 +111,6 @@ estimate_het_one_mod <- function(data, change_dv, pre_dv, text_treatment, modera
 # =============================================================================
 # Run all DVs x moderators
 # =============================================================================
-
-sigstars <- function(p) {
-  dplyr::case_when(
-    p < 0.001 ~ "***", p < 0.01 ~ "**", p < 0.05 ~ "*", p < 0.1 ~ ".", TRUE ~ ""
-  )
-}
 
 cat("\n=== Treatment-Effect Heterogeneity by Demographics ===\n\n")
 
@@ -156,16 +154,79 @@ if (sig_count > 0) {
   cat("\nNo significant heterogeneity after Holm correction.\n")
 }
 
+fs::dir_create(here::here("output", "tables"))
+readr::write_csv(het_summary, here::here("output", "tables", "heterogeneity-demographics-t1.csv"))
+readr::write_csv(summary_table, here::here("output", "tables", "heterogeneity-demographics-t1-summary.csv"))
+
+# Paper table helpers: Lewis/Cyber Sleuth outcomes only (Material Values in text).
+dv_pub_t1 <- c(
+  "IRS Approval Composite" = "IRS Favorability",
+  "Civil Service Composite" = "Civil Service Favorability",
+  "DOGE Approval" = "DOGE Disapproval",
+  "Trump Approval" = "Trump Disapproval",
+  "IRS Enforcement" = "IRS Funding Support",
+  "SSA Agents Favorability" = "SSA Agent Favorability"
+)
+dv_pub_t2 <- c(
+  "IRS Approval Composite (FU)" = "IRS Favorability",
+  "Civil Service Composite (FU)" = "Civil Service Favorability",
+  "DOGE Approval (FU)" = "DOGE Disapproval",
+  "Trump Approval (FU)" = "Trump Disapproval",
+  "IRS Enforcement (FU)" = "IRS Funding Support",
+  "SSA Agents Favorability (FU)" = "SSA Agent Favorability"
+)
+mod_short <- c(
+  "Gender" = "Gender",
+  "Age" = "Age",
+  "Education (categorical)" = "Education",
+  "Household Income" = "Income",
+  "Race (White vs Non-White)" = "Race",
+  "Strong Republican" = "\\shortstack{Partisan\\\\identification}",
+  "Strong Conservative" = "\\shortstack{Political\\\\ideology}"
+)
+mod_cols <- unname(mod_short)
+
+wide_holm_from <- function(het_df, dv_pub) {
+  wide <- het_df |>
+    filter(dv %in% names(dv_pub)) |>
+    mutate(
+      DV = dplyr::recode(dv, !!!dv_pub),
+      Moderator = dplyr::recode(mod_label, !!!mod_short),
+      cell = ifelse(
+        is.na(p_holm),
+        "---",
+        sprintf("%.3f%s", p_holm, sigstars(p_holm, tex = TRUE))
+      )
+    ) |>
+    select(DV, Moderator, cell) |>
+    tidyr::pivot_wider(names_from = Moderator, values_from = cell) |>
+    mutate(DV = factor(DV, levels = unname(dv_pub))) |>
+    arrange(DV)
+  wide
+}
+
+row_tex <- function(wide_df) {
+  purrr::map_chr(seq_len(nrow(wide_df)), function(i) {
+    cells <- vapply(mod_cols, function(m) as.character(wide_df[[m]][[i]]), character(1))
+    sprintf("   %s & %s \\\\", as.character(wide_df$DV[[i]]), paste(cells, collapse = " & "))
+  })
+}
+
+n_t1 <- nrow(d)
+wide_t1 <- wide_holm_from(het_summary, dv_pub_t1)
+
 # =============================================================================
 # Part 2: Follow-up (T2 − pre) heterogeneity
 # =============================================================================
 
 fu_path <- here::here("data", "d_with_followup.rds")
+het_summary_t2 <- NULL
+n_t2 <- NA_integer_
 
 if (file.exists(fu_path)) {
   d_fu <- readRDS(fu_path) |>
-    dplyr::filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L) |>
-    dplyr::distinct(PROLIFIC_PID, .keep_all = TRUE)
+    dplyr::filter(!is.na(.data$ResponseId_fu), .data$fu_completed_outcomes == 1L)
+  n_t2 <- nrow(d_fu)
 
   dv_specs_t2 <- tribble(
     ~change_dv,                ~pre_dv,             ~label,                          ~text_treatment,
@@ -215,6 +276,70 @@ if (file.exists(fu_path)) {
   } else {
     cat("\nNo significant heterogeneity after Holm correction.\n")
   }
+
+  readr::write_csv(het_summary_t2, here::here("output", "tables", "heterogeneity-demographics-t2.csv"))
+  readr::write_csv(summary_table_t2, here::here("output", "tables", "heterogeneity-demographics-t2-summary.csv"))
+  cat("Saved: output/tables/heterogeneity-demographics-t2.csv\n")
 } else {
   cat("\nSkipped follow-up heterogeneity: data/d_with_followup.rds not found.\n")
 }
+
+# Combined T1 + T2 LaTeX table for the paper
+ncol_tab <- length(mod_cols) + 1L
+tex_lines <- c(
+  "\\begin{table}[!htbp]",
+  "  \\centering",
+  "  \\caption{Treatment-effect moderation (Holm-adjusted $p$ values)}",
+  "  \\label{tab:het-demographics}",
+  "  \\footnotesize",
+  "  \\setlength{\\tabcolsep}{3.5pt}",
+  paste0("  \\begin{tabular}{@{}l", paste(rep("c", length(mod_cols)), collapse = ""), "@{}}"),
+  "  \\toprule",
+  paste0("  Outcome & ", paste(mod_cols, collapse = " & "), " \\\\"),
+  "  \\midrule",
+  sprintf(
+    "  \\multicolumn{%d}{@{}l}{\\textbf{Immediately post-treatment}} \\\\",
+    ncol_tab
+  ),
+  row_tex(wide_t1)
+)
+
+if (!is.null(het_summary_t2)) {
+  wide_t2 <- wide_holm_from(het_summary_t2, dv_pub_t2)
+  tex_lines <- c(
+    tex_lines,
+    "  \\midrule",
+    sprintf(
+      "  \\multicolumn{%d}{@{}l}{\\textbf{At 2-month follow-up}} \\\\",
+      ncol_tab
+    ),
+    row_tex(wide_t2)
+  )
+  note_n <- sprintf(
+    "Immediately post-treatment uses completers ($N = %d$) and 2-month follow-up uses returners ($N = %d$). ",
+    n_t1, n_t2
+  )
+} else {
+  note_n <- sprintf("Immediately post-treatment uses completers ($N = %d$). ", n_t1)
+}
+
+tex_lines <- c(
+  tex_lines,
+  "  \\bottomrule",
+  "  \\end{tabular}",
+  "  \\vspace{2pt}",
+  "  \\begin{minipage}{0.98\\linewidth}",
+  paste0(
+    "    \\footnotesize\\textit{Note.} Entries are Holm-adjusted $p$ values for the text $\\times$ moderator ",
+    "interaction from OLS models of change scores. ",
+    note_n,
+    "Correction is applied across the seven moderators within each outcome and time period. ",
+    "$^{\\dagger}p < .10$, *$p < .05$, **$p < .01$, ***$p < .001$."
+  ),
+  "  \\end{minipage}",
+  "\\end{table}",
+  ""
+)
+writeLines(tex_lines, here::here("output", "tables", "te-heterogeneity.tex"))
+cat("Saved: output/tables/heterogeneity-demographics-t1.csv\n")
+cat("Saved: output/tables/te-heterogeneity.tex\n")

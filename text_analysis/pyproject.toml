@@ -1,0 +1,16 @@
+# Python counterpart of DESCRIPTION. Exact versions (including transitives)
+# live in uv.lock and the hashed requirements.txt — analogous to renv.lock.
+[project]
+name = "text-ai-summary-persuasion"
+version = "1.0.0"
+description = "Text-comparison tables for White, Berinsky, Pastoriza, and Rand (2026)"
+requires-python = ">=3.10"
+dependencies = [
+    "nltk==3.10.3",
+    "nrclex==4.1.0",
+    "textblob==0.20.1",
+    "textstat==0.7.13",
+]
+
+[tool.uv]
+package = false
